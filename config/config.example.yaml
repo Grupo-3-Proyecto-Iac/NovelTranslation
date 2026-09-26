@@ -2,14 +2,30 @@ storage:
   base_directory: data/novels
 
 access:
+  timeout:
+    connect_seconds: 10
+    read_seconds: 30
+    write_seconds: 30
+    pool_seconds: 10
+
   concurrency: 1
   delay:
     min_seconds: 8
     max_seconds: 15
   requests_per_minute: 4
 
+  follow_redirects: true
+  max_response_size_mb: 10
+
+  headers:
+    User-Agent: "NovelTranslator/0.1"
+    Accept: "text/html,application/xhtml+xml,text/plain"
+    Accept-Language: "en-US,en;q=0.9"
+
 retry:
   max_attempts: 3
   base_delay_seconds: 30
   max_delay_seconds: 300
+  backoff_factor: 2
+  max_retry_after_seconds: 300
 

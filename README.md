@@ -62,6 +62,30 @@ noveltranslator resume
 
 Los comandos `inspect`, `download`, `translate` y `export` permanecen como puntos de entrada futuros y no realizan operaciones web o de traducción.
 
+## Access Layer de Sprint 2
+
+Las fuentes futuras deben acceder a Internet mediante esta cadena:
+
+```text
+Source → AccessManager → HttpClient → RateLimiter + RetryPolicy → Internet
+```
+
+El cliente es síncrono porque el MVP no necesita concurrencia asíncrona y así mantiene una API sencilla. Usa `httpx.Client` con cookies y conexiones persistentes durante la ejecución; `close()` y el context manager liberan los recursos. Playwright queda reservado para una futura implementación de `BrowserClient`.
+
+`AccessConfig` permite configurar timeouts, headers explícitos, redirects, tamaño máximo de respuesta, pausas y requests por minuto. El `RateLimiter` aplica la pausa entre requests y una ventana móvil de frecuencia; acepta reloj, sleeper y randomizador inyectables para tests sin esperas reales.
+
+`RetryPolicy` limita los intentos. Reintenta timeouts, errores de red y `429`, `502`, `503` y `504`; no reintenta normalmente `400`, `401`, `403` ni `404`. Usa backoff exponencial con máximo configurable y respeta `Retry-After` en segundos o fecha HTTP, limitado por `max_retry_after_seconds`.
+
+`AccessStatus` clasifica respuestas HTTP y heurísticas conservadoras para CAPTCHA, login requerido y JavaScript requerido. Estas señales solo se detectan y reportan: no existe bypass ni evasión. `AccessResponse` desacopla las fuentes de HTTPX e incluye URL final, estado, headers, tamaño, intentos y tiempo. `AccessStats` mantiene métricas básicas sin guardar cookies ni contenido completo en logs.
+
+El diagnóstico controlado es:
+
+```bash
+noveltranslator access check https://example.com --no-delay
+```
+
+`--no-delay` solo desactiva las pausas para ese diagnóstico explícito; no cambia la configuración de producción. Los tests usan `httpx.MockTransport` y no dependen de Internet real.
+
 ## Extensiones y fuentes
 
 Una fuente futura implementa `NovelSource` (`can_handle`, `get_novel`, `get_chapters`, `get_chapter`) y se registra con `registry.register(source)`. Después puede resolverse por URL con `registry.resolve(url)`, sin acoplar el core a un sitio concreto.
