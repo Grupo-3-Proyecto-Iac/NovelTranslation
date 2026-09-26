@@ -1,7 +1,9 @@
+import re
+
 from .models import AccessResponse, AccessStatus
 
 
-CAPTCHA_MARKERS = ("captcha", "verify you are human", "human verification", "cf-chl", "challenge")
+CAPTCHA_MARKERS = ("captcha", "verify you are human", "human verification", "cf-chl")
 LOGIN_MARKERS = ("login required", "sign in to continue", "authentication required")
 JAVASCRIPT_MARKERS = ("enable javascript", "javascript required", "please enable javascript")
 
@@ -19,8 +21,12 @@ def classify_response(status_code: int | None, text: str = "", *, redirected: bo
         return AccessStatus.SERVER_ERROR
     if redirected:
         return AccessStatus.REDIRECTED
-    lowered = text.lower()
-    if any(marker in lowered for marker in CAPTCHA_MARKERS):
+    visible = re.sub(r"<script\b[^>]*>.*?</script\s*>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    visible = re.sub(r"<style\b[^>]*>.*?</style\s*>", " ", visible, flags=re.IGNORECASE | re.DOTALL)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    lowered = visible.lower()
+    challenge_signal = "challenge" in lowered and any(marker in lowered for marker in ("human", "security", "cloudflare", "verify"))
+    if any(marker in lowered for marker in CAPTCHA_MARKERS) or challenge_signal:
         return AccessStatus.CAPTCHA_REQUIRED
     if any(marker in lowered for marker in LOGIN_MARKERS):
         return AccessStatus.LOGIN_REQUIRED

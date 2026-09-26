@@ -68,7 +68,7 @@ class NovelRepository:
         directory.mkdir(parents=True, exist_ok=True)
         metadata_path = directory / "metadata.json"
         if not metadata_path.exists():
-            write_json_atomic(metadata_path, {"number": chapter.number, "title": chapter.title, "url": chapter.url, "status": chapter.status.value, "updated_at": utc_now_iso()})
+            write_json_atomic(metadata_path, {"number": chapter.number, "title": chapter.title, "url": chapter.url, "status": chapter.status.value, "chapter_type": chapter.chapter_type, "order_index": chapter.order_index, "updated_at": utc_now_iso()})
             logger.info("Chapter metadata saved: %s/%03d", novel_id, chapter.number)
         return directory
 

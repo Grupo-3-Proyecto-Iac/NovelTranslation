@@ -90,6 +90,8 @@ noveltranslator access check https://example.com --no-delay
 
 Una fuente futura implementa `NovelSource` (`can_handle`, `get_novel`, `get_chapters`, `get_chapter`) y se registra con `registry.register(source)`. Después puede resolverse por URL con `registry.resolve(url)`, sin acoplar el core a un sitio concreto.
 
+Lorenovels es la primera implementación real. Reconoce `lorenovels.com` y `www.lorenovels.com`, obtiene metadata y capítulos mediante HTTPX/`AccessManager`, y extrae capítulos individuales desde el contenedor WordPress `.entry-content.wp-block-post-content`. La fuente no guarda datos, no descarga masivamente y no intenta resolver CAPTCHA; si el acceso está bloqueado, lo reporta.
+
 ## Roadmap
 
 1. Sprint 0: arquitectura, modelos, interfaces, JSON y CLI base.

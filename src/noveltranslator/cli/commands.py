@@ -1,12 +1,15 @@
-import typer
 from dataclasses import replace
 
-from noveltranslator.application.resume_service import ResumeService
-from noveltranslator.infrastructure.config import load_yaml
-from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
+import typer
+
 from noveltranslator.access.http_client import HttpClient
 from noveltranslator.access.manager import AccessManager
 from noveltranslator.access.models import AccessConfig, RetryConfig
+from noveltranslator.application.resume_service import ResumeService
+from noveltranslator.core.models import Chapter
+from noveltranslator.infrastructure.config import load_yaml
+from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
+from noveltranslator.sources.loader import default_registry
 from noveltranslator.storage.repository import NovelRepository
 
 app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web.")
@@ -35,7 +38,13 @@ def access_manager(no_delay: bool = False) -> AccessManager:
 
 @source_app.command("list")
 def source_list() -> None:
-    typer.echo("No hay fuentes registradas.")
+    registry = default_registry()
+    try:
+        for source in registry.list():
+            typer.echo(source.name)
+    finally:
+        for source in registry.list():
+            source.access_manager.close()
 
 
 @access_app.command("check")
@@ -64,8 +73,43 @@ def novel_list() -> None:
 
 
 @app.command()
-def inspect(url: str = typer.Argument(..., help="URL de la novela")) -> None:
-    typer.echo(f"Inspección aún no implementada para: {url}")
+def inspect(url: str = typer.Argument(..., help="URL de la novela"), all_chapters: bool = typer.Option(False, "--all", help="Muestra todos los capítulos")) -> None:
+    manager = access_manager()
+    try:
+        source = default_registry(manager).resolve(url)
+        novel = source.get_novel(url)
+        chapters = source.get_chapters(novel)
+    finally:
+        manager.close()
+    typer.echo(f"Source: {source.name}\n")
+    typer.echo("Novel:")
+    typer.echo(f"  Title: {novel.title}")
+    typer.echo(f"  Author: {novel.author or '-'}")
+    typer.echo(f"  Language: {novel.language}")
+    typer.echo(f"\nChapters:\n  Found: {len(chapters)}")
+    shown = chapters if all_chapters else chapters[:3] + (chapters[-1:] if len(chapters) > 3 else [])
+    if shown:
+        typer.echo("\n  Chapters:")
+        for chapter in shown:
+            typer.echo(f"  {chapter.number:03d} - {chapter.title}")
+
+
+@app.command("inspect-chapter")
+def inspect_chapter(url: str = typer.Argument(..., help="URL del capítulo"), preview: int = typer.Option(0, "--preview", min=0, help="Muestra los primeros N párrafos")) -> None:
+    manager = access_manager()
+    try:
+        source = default_registry(manager).resolve(url)
+        chapter = source.get_chapter(Chapter(source.chapter_number_from_url(url), "", url))
+    finally:
+        manager.close()
+    typer.echo(f"Source: {source.name}")
+    typer.echo(f"Chapter: {chapter.number}")
+    typer.echo(f"Title: {chapter.title or '-'}")
+    typer.echo(f"Paragraphs: {len(chapter.paragraphs)}")
+    typer.echo(f"Characters: {sum(len(paragraph) for paragraph in chapter.paragraphs)}")
+    typer.echo("Access status: OK")
+    for paragraph in chapter.paragraphs[:preview]:
+        typer.echo(f"\n{paragraph}")
 
 
 @app.command()

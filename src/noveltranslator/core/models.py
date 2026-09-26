@@ -11,6 +11,8 @@ class Chapter:
     url: str
     status: ProcessingState = ProcessingState.PENDING
     paragraphs: list[str] = field(default_factory=list)
+    chapter_type: str = "chapter"
+    order_index: int | None = None
 
 
 @dataclass

@@ -21,3 +21,23 @@ class NovelNotFoundError(StorageError):
 class ChapterNotFoundError(StorageError):
     pass
 
+
+class SourceError(NovelTranslatorError):
+    """Base exception for source parsing and access failures."""
+
+
+class NovelMetadataNotFoundError(SourceError):
+    pass
+
+
+class ChapterContentNotFoundError(SourceError):
+    pass
+
+
+class InvalidChapterContentError(SourceError):
+    pass
+
+
+class AccessBlockedError(SourceError):
+    pass
+
