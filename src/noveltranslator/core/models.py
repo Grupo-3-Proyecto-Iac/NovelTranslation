@@ -65,6 +65,47 @@ class GlossaryTerm:
 
 
 @dataclass
+class TranslationMemoryEntry:
+    id: str
+    source_text: str
+    translated_text: str
+    source_language: str
+    target_language: str
+    chapter_number: int | None
+    chunk_index: int | None
+    created_at: str
+    source_hash: str | None
+    translation_id: str
+    status: str = "ACTIVE"
+    preferred: bool = False
+    usage_count: int = 0
+    last_used_at: str | None = None
+    confidence: float | None = None
+
+
+@dataclass
+class ContextMemoryItem:
+    id: str
+    text: str
+    chapter_number: int
+    entities: list[str] = field(default_factory=list)
+    source_hash: str | None = None
+    translation_id: str = "default"
+    status: str = "ACTIVE"
+    created_at: str = ""
+
+
+@dataclass
+class ChapterContext:
+    chapter_number: int
+    summary: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    source_hash: str | None = None
+    translation_id: str = "default"
+    updated_at: str = ""
+
+
+@dataclass
 class ProgressRecord:
     novel_id: str
     chapter_number: int | None

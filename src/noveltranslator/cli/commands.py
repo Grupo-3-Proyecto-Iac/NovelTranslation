@@ -9,10 +9,11 @@ from noveltranslator.application.resume_service import ResumeService
 from noveltranslator.application.download_service import DownloadService
 from noveltranslator.application.analysis_service import AnalysisService
 from noveltranslator.application.translation_service import TranslationService
-from noveltranslator.core.models import Chapter
+from noveltranslator.core.models import Chapter, TranslationMemoryEntry
 from noveltranslator.core.models import GlossaryTerm
 from noveltranslator.core.enums import GlossaryStatus
 from noveltranslator.processing.glossary import GlossaryManager
+from noveltranslator.processing.memory import MemoryManager
 from noveltranslator.processing.splitter import TextSplitter
 from noveltranslator.infrastructure.config import load_yaml
 from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
@@ -31,8 +32,12 @@ app.add_typer(access_app, name="access")
 app.add_typer(glossary_app, name="glossary")
 translator_app = typer.Typer(help="Gestiona los traductores disponibles.")
 translation_app = typer.Typer(help="Consulta traducciones persistidas.")
+memory_app = typer.Typer(help="Gestiona la memoria de traducción.")
+context_app = typer.Typer(help="Consulta el contexto narrativo persistido.")
 app.add_typer(translator_app, name="translator")
 app.add_typer(translation_app, name="translation")
+app.add_typer(memory_app, name="memory")
+app.add_typer(context_app, name="context")
 
 
 def repository() -> NovelRepository:
@@ -84,6 +89,23 @@ def translation_registry() -> tuple[TranslatorRegistry, dict]:
 def close_translation_registry(registry: TranslatorRegistry) -> None:
     for translator_id in registry.list():
         registry.resolve(translator_id).close()
+
+
+def memory_manager(novel_id: str) -> MemoryManager:
+    return MemoryManager(repository(), novel_id)
+
+
+def translation_service(registry: TranslatorRegistry, options: dict) -> TranslationService:
+    memory = options.get("memory", {})
+    return TranslationService(
+        repository(),
+        registry,
+        max_attempts=int(options.get("retry", {}).get("max_attempts", 1)),
+        memory_enabled=bool(memory.get("enabled", True)),
+        max_translation_entries=int(memory.get("translation", {}).get("max_entries_per_request", 20)),
+        max_context_items=int(memory.get("context", {}).get("max_items", 20)),
+        previous_chapters=int(memory.get("context", {}).get("previous_chapters", 2)),
+    )
 
 
 @source_app.command("list")
@@ -209,8 +231,7 @@ def translate(novel_id: str = typer.Argument(..., help="Identificador local de n
     registry, options = translation_registry()
     selected = translator or str(options.get("provider", "mock"))
     try:
-        attempts = int(options.get("retry", {}).get("max_attempts", 1))
-        summary = TranslationService(repository(), registry, max_attempts=attempts).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
+        summary = translation_service(registry, options).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
     finally:
         close_translation_registry(registry)
     typer.echo(f"Novel: {summary.novel_id}")
@@ -233,6 +254,45 @@ def translation_show(novel_id: str = typer.Argument(...), chapter: int = typer.A
     typer.echo(data.get("source_text", ""))
     typer.echo("Translation:")
     typer.echo(data.get("translated_text", ""))
+
+
+@memory_app.command("list")
+def memory_list(novel_id: str = typer.Argument(...), status: str | None = typer.Option(None, "--status")) -> None:
+    entries = memory_manager(novel_id).load_translation_memory()
+    for entry in entries:
+        if status and entry.status != status.upper():
+            continue
+        preferred = " preferred" if entry.preferred else ""
+        typer.echo(f"{entry.source_text} -> {entry.translated_text} [{entry.status}{preferred}] ({entry.translation_id}, ch={entry.chapter_number}, chunk={entry.chunk_index})")
+
+
+@memory_app.command("add")
+def memory_add(novel_id: str = typer.Argument(...), source: str = typer.Option(..., "--source"), translation: str = typer.Option(..., "--translation"), translation_id: str = typer.Option("default", "--translation-id"), source_language: str = typer.Option("en", "--source-language"), target_language: str = typer.Option("es", "--target-language"), preferred: bool = typer.Option(True, "--preferred/--not-preferred")) -> None:
+    entry = TranslationMemoryEntry(f"manual-{abs(hash((source, translation, translation_id)))}", source, translation, source_language, target_language, None, None, "", None, translation_id, "ACTIVE", preferred)
+    saved = memory_manager(novel_id).add_translation_entry(entry)
+    typer.echo(f"Added: {saved.source_text} -> {saved.translated_text} [{saved.status}]")
+
+
+@memory_app.command("search")
+def memory_search(novel_id: str = typer.Argument(...), text: str = typer.Argument(...), limit: int = typer.Option(20, "--limit", min=1)) -> None:
+    entries = memory_manager(novel_id).find_relevant(text, max_items=limit)
+    for entry in entries:
+        typer.echo(f"{entry.source_text} -> {entry.translated_text} [{entry.status}]")
+
+
+@context_app.command("show")
+def context_show(novel_id: str = typer.Argument(...), chapter: int | None = typer.Option(None, "--chapter", min=1), limit: int = typer.Option(20, "--limit", min=1)) -> None:
+    repo = repository()
+    if chapter is not None:
+        data = repo.load_chapter_context(novel_id, chapter)
+        typer.echo(f"Chapter: {chapter:03d}")
+        for item in data.get("summary", []):
+            typer.echo(f"- {item}")
+        typer.echo(f"Entities: {', '.join(data.get('entities', [])) or '-'}")
+        return
+    items = memory_manager(novel_id).load_context_memory()[-limit:]
+    for item in items:
+        typer.echo(f"[ch={item.chapter_number}] {item.text} ({', '.join(item.entities) or '-'})")
 
 
 @app.command()
@@ -258,8 +318,7 @@ def resume(novel_id: str | None = typer.Argument(None, help="Identificador local
         progress = repository().load_progress(novel_id)
         registry, options = translation_registry()
         try:
-            attempts = int(options.get("retry", {}).get("max_attempts", 1))
-            summary = TranslationService(repository(), registry, max_attempts=attempts).translate_novel(novel_id, translation_id=progress.get("translation_id") or "default", translator_id=str(options.get("provider", "mock")), source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit)
+            summary = translation_service(registry, options).translate_novel(novel_id, translation_id=progress.get("translation_id") or "default", translator_id=str(options.get("provider", "mock")), source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit)
         finally:
             close_translation_registry(registry)
         typer.echo(f"Translation resumed: {summary.chunks_translated} translated, {summary.pending} pending")

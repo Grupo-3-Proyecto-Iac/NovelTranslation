@@ -3,8 +3,9 @@ from dataclasses import dataclass
 
 from noveltranslator.analysis.context_builder import ContextBuilder
 from noveltranslator.core.enums import EntityStatus, EntityType, GlossaryStatus, ProcessingState
-from noveltranslator.core.models import Chunk, Entity, GlossaryTerm
+from noveltranslator.core.models import Chunk, Entity, GlossaryTerm, TranslationMemoryEntry
 from noveltranslator.processing.glossary import GlossaryManager
+from noveltranslator.processing.memory import MemoryManager, normalized_key
 from noveltranslator.processing.normalizer import TextNormalizer
 from noveltranslator.processing.validator import TranslationValidator
 from noveltranslator.storage.progress_manager import ProgressManager
@@ -31,7 +32,7 @@ class TranslationSummary:
 
 
 class TranslationService:
-    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1) -> None:
+    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1, memory_enabled: bool = True, max_translation_entries: int = 20, max_context_items: int = 20, previous_chapters: int = 2) -> None:
         self.repository = repository
         self.registry = registry
         self.context_builder = context_builder or ContextBuilder()
@@ -39,6 +40,10 @@ class TranslationService:
         self.protector = protector or ProtectedTermProtector()
         self.normalizer = TextNormalizer()
         self.max_attempts = max(1, int(max_attempts))
+        self.memory_enabled = memory_enabled
+        self.max_translation_entries = max(0, int(max_translation_entries))
+        self.max_context_items = max(0, int(max_context_items))
+        self.previous_chapters = max(0, int(previous_chapters))
 
     def translate_novel(self, novel_id: str, *, translation_id: str = "default", translator_id: str = "mock", source_language: str | None = None, target_language: str = "es", limit: int | None = None, from_chapter: int | None = None, to_chapter: int | None = None, force: bool = False) -> TranslationSummary:
         if limit is not None and limit < 1:
@@ -50,6 +55,7 @@ class TranslationService:
         progress.start_novel()
         progress.set_translation_id(translation_id)
         glossary = GlossaryManager(self.repository, novel_id).list_terms()
+        memory = MemoryManager(self.repository, novel_id)
         processed = translated = skipped = failed = 0
         paused = False
         for number in chapters:
@@ -61,7 +67,7 @@ class TranslationService:
                 continue
             chapter_metadata = self.repository.load_chapter_metadata(novel_id, number)
             try:
-                result = self._translate_chapter(novel_id, number, metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language)
+                result = self._translate_chapter(novel_id, number, metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language, memory)
                 translated += result[0]
                 skipped += result[1]
                 processed += 1
@@ -82,11 +88,13 @@ class TranslationService:
             progress.complete()
         return TranslationSummary(novel_id, translation_id, processed, translated, skipped, failed, pending, completed, paused)
 
-    def _translate_chapter(self, novel_id, number, novel_metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language) -> tuple[int, int]:
+    def _translate_chapter(self, novel_id, number, novel_metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language, memory: MemoryManager) -> tuple[int, int]:
         chunks_payload = self.repository.load_chunks(novel_id, number)
         source_data = self.repository.load_source(novel_id, number)
         current_hash = self.normalizer.source_hash(self.normalizer.normalize(source_data.get("paragraphs", [])))
         if chunks_payload.get("source_hash") != current_hash:
+            if self.memory_enabled:
+                memory.mark_stale_for_chapter(number, current_hash)
             raise ValueError("persisted chunks are stale for the current source")
         chunks = [Chunk(**item) for item in chunks_payload.get("chunks", [])]
         analysis = self.repository.load_analysis(novel_id, number) if self.repository.analysis_exists(novel_id, number) else {}
@@ -96,15 +104,22 @@ class TranslationService:
         self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.TRANSLATING.value})
         for chunk in chunks:
             if self._translation_valid(novel_id, number, translation_id, chunk.index, current_hash) and not force:
+                if self.memory_enabled:
+                    self._reconcile_chunk_memory(memory, novel_id, number, chunk, translation_id, current_hash)
                 skipped += 1
                 previous.append(chunk)
                 continue
             progress.set_current_chapter(number)
             progress.set_stage(ProcessingState.TRANSLATING)
             progress.set_chunk_progress(chunk.index, len(chunks))
-            context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk, previous, glossary, entities)
+            source_language_value = source_language or novel_metadata.get("language", "en")
+            relevant_memory = memory.find_relevant(chunk.source_text, source_language=source_language_value, target_language=target_language, translation_id=translation_id, max_items=self.max_translation_entries) if self.memory_enabled else []
+            locked_keys = {normalized_key(term.term) for term in glossary if term.locked or term.status is GlossaryStatus.CONFIRMED}
+            relevant_memory = [item for item in relevant_memory if normalized_key(item.source_text) not in locked_keys]
+            relevant_context = memory.find_context(chunk.source_text, chapter_number=number, translation_id=translation_id, previous_chapters=self.previous_chapters, max_items=self.max_context_items) if self.memory_enabled else []
+            context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk, previous, glossary, entities, relevant_memory, relevant_context)
             protected_text, replacements, protected_terms = self.protector.protect(chunk.source_text, context.glossary_terms)
-            request = TranslationRequest(protected_text, source_language or novel_metadata.get("language", "en"), target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, protected_terms, context.entities)
+            request = TranslationRequest(protected_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, protected_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context)
             result = None
             for attempt in range(1, self.max_attempts + 1):
                 try:
@@ -118,11 +133,38 @@ class TranslationService:
             restored = self.protector.restore(result.translated_text, replacements)
             clean = self.validator.validate(restored, replacements)
             self.repository.save_translation_chunk(novel_id, number, translation_id, {"chapter_number": number, "chunk_index": chunk.index, "source_hash": current_hash, "source_text": chunk.source_text, "translated_text": clean, "translator_id": result.translator_id, "model_id": result.model_id, "source_language": result.source_language, "target_language": result.target_language, "created_at": utc_now_iso(), "elapsed_seconds": result.elapsed_seconds, "metadata": result.metadata})
+            if self.memory_enabled:
+                self._record_chunk_memory(memory, chunk, clean, result.source_language, result.target_language, number, translation_id, current_hash, protected_terms)
             translated += 1
             previous.append(chunk)
         self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.TRANSLATED.value})
+        if self.memory_enabled:
+            self._save_chapter_context(memory, novel_id, number, translation_id, current_hash, entities, glossary)
         progress.mark_translation_completed(number)
         return translated, skipped
+
+    def _record_chunk_memory(self, memory, chunk, translated_text, source_language, target_language, chapter_number, translation_id, source_hash, protected_terms):
+        if len(chunk.source_text) <= 160 and "\n" not in chunk.source_text.strip():
+            memory.add_translation_entry(TranslationMemoryEntry(f"{translation_id}-{chapter_number}-{chunk.index}", chunk.source_text, translated_text, source_language, target_language, chapter_number, chunk.index, utc_now_iso(), source_hash, translation_id, "ACTIVE", False, 0, None, None))
+        for term in protected_terms:
+            if term.translation and term.term in chunk.source_text:
+                memory.add_translation_entry(TranslationMemoryEntry(f"{translation_id}-{chapter_number}-{chunk.index}-{term.term}", term.term, term.translation, source_language, target_language, chapter_number, chunk.index, utc_now_iso(), source_hash, translation_id, "ACTIVE", True, 0, None, 1.0))
+
+    def _reconcile_chunk_memory(self, memory, novel_id, chapter_number, chunk, translation_id, source_hash):
+        data = self.repository.load_translation_chunk(novel_id, chapter_number, translation_id, chunk.index)
+        if not data.get("translated_text"):
+            return
+        source_language = data.get("source_language", "en")
+        target_language = data.get("target_language", "es")
+        memory.add_translation_entry(TranslationMemoryEntry(f"{translation_id}-{chapter_number}-{chunk.index}", chunk.source_text, data["translated_text"], source_language, target_language, chapter_number, chunk.index, data.get("created_at", utc_now_iso()), source_hash, translation_id, "ACTIVE", False, 0, None, None))
+        logger.info("Memory reconciled: %s/%03d/%03d", novel_id, chapter_number, chunk.index)
+
+    def _save_chapter_context(self, memory, novel_id, chapter_number, translation_id, source_hash, entities, glossary):
+        names = sorted({entity.text for entity in entities} | {term.term for term in glossary if term.locked or term.status is GlossaryStatus.CONFIRMED})
+        summary = [f"{name} is relevant in chapter {chapter_number}." for name in names]
+        self.repository.save_chapter_context(novel_id, chapter_number, {"chapter_number": chapter_number, "summary": summary, "entities": names, "source_hash": source_hash, "translation_id": translation_id, "updated_at": utc_now_iso()})
+        for item in summary:
+            memory.add_context_item(item, chapter_number, names, source_hash=source_hash, translation_id=translation_id)
 
     def _translation_valid(self, novel_id, number, translation_id, chunk_index, source_hash) -> bool:
         if not self.repository.translation_chunk_exists(novel_id, number, translation_id, chunk_index):

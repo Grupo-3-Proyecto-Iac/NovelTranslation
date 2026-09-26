@@ -164,6 +164,26 @@ noveltranslator resume NOVEL_ID
 
 La traducción es idempotente por hash y checkpoint: los chunks válidos existentes se omiten y una interrupción deja progreso para `resume`. `--force` permite reprocesar explícitamente.
 
+## Translation Memory y Context Memory de Sprint 7
+
+La memoria se guarda por novela en `translation_memory.json` y `context_memory.json`, con escritura JSON atómica y UTF-8. Las entradas de traducción conservan `chapter_number`, `chunk_index`, `source_hash` y `translation_id` para trazabilidad.
+
+La búsqueda reutilizable es exacta o por coincidencia simple de palabras normalizadas (espacios y `casefold`); no hay embeddings ni base vectorial. Las entradas repetidas se deduplican, los cambios de traducción se marcan como `CONFLICT` y las entradas cuyo hash ya no coincide se marcan como `STALE` sin borrarlas. La prioridad prevista es `glossary locked > glossary confirmed > preferred translation memory > modelo`.
+
+Después de completar un capítulo se genera `chapters/NNN/chapter_context.json` y se actualiza la memoria narrativa con entidades y resúmenes conservadores. El contexto enviado al traductor está limitado por configuración y solo incluye memoria relevante de capítulos anteriores, para evitar enviar toda la novela al prompt.
+
+Comandos:
+
+```bash
+noveltranslator memory add NOVEL_ID --source "Your Highness" --translation "Su Alteza"
+noveltranslator memory list NOVEL_ID
+noveltranslator memory search NOVEL_ID "Your Highness"
+noveltranslator context show NOVEL_ID
+noveltranslator context show NOVEL_ID --chapter 1
+```
+
+La reconciliación vuelve a registrar memoria a partir de un chunk traducido válido si el proceso se interrumpió después de guardar la traducción y antes de actualizar la memoria.
+
 ## Roadmap
 
 1. Sprint 0: arquitectura, modelos, interfaces, JSON y CLI base.

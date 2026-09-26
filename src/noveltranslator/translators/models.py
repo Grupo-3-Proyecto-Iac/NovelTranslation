@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from noveltranslator.core.models import Entity, GlossaryTerm
+from noveltranslator.core.models import ContextMemoryItem, Entity, GlossaryTerm, TranslationMemoryEntry
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,8 @@ class TranslationRequest:
     protected_terms: list[GlossaryTerm] = field(default_factory=list)
     entities: list[Entity] = field(default_factory=list)
     translation_style: str = "natural literary Spanish"
+    translation_memory: list[TranslationMemoryEntry] = field(default_factory=list)
+    narrative_context: list[ContextMemoryItem] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

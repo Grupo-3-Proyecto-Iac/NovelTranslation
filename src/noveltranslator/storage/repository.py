@@ -37,7 +37,7 @@ class NovelRepository:
         metadata = {"id": identifier, "title": novel.title, "author": novel.author, "language": novel.language, "description": novel.description, "cover_url": novel.cover_url, "source": novel.source, "source_url": novel.source_url, "created_at": now, "updated_at": now}
         if not (directory / "metadata.json").exists():
             write_json_atomic(directory / "metadata.json", metadata)
-        for filename, initial in (("glossary.json", {"terms": []}), ("translation_memory.json", {"entries": []})):
+        for filename, initial in (("glossary.json", {"terms": []}), ("translation_memory.json", {"entries": []}), ("context_memory.json", {"items": []})):
             if not (directory / filename).exists():
                 write_json_atomic(directory / filename, initial)
         logger.info("Novel created: %s", identifier)
@@ -125,6 +125,39 @@ class NovelRepository:
 
     def save_glossary(self, novel_id: str, payload: dict[str, Any]) -> None:
         write_json_atomic(self._require(novel_id) / "glossary.json", payload)
+
+    def load_translation_memory(self, novel_id: str) -> dict[str, Any]:
+        path = self._require(novel_id) / "translation_memory.json"
+        return read_json(path) if path.exists() else {"entries": []}
+
+    def save_translation_memory(self, novel_id: str, payload: dict[str, Any]) -> None:
+        write_json_atomic(self._require(novel_id) / "translation_memory.json", payload)
+
+    def load_context_memory(self, novel_id: str) -> dict[str, Any]:
+        path = self._require(novel_id) / "context_memory.json"
+        return read_json(path) if path.exists() else {"items": []}
+
+    def save_context_memory(self, novel_id: str, payload: dict[str, Any]) -> None:
+        write_json_atomic(self._require(novel_id) / "context_memory.json", payload)
+
+    def _chapter_context_path(self, novel_id: str, number: int) -> Path:
+        return self._chapter_dir(novel_id, number) / "chapter_context.json"
+
+    def save_chapter_context(self, novel_id: str, number: int, payload: dict[str, Any]) -> None:
+        write_json_atomic(self._chapter_context_path(novel_id, number), payload)
+
+    def load_chapter_context(self, novel_id: str, number: int) -> dict[str, Any]:
+        return read_json(self._chapter_context_path(novel_id, number))
+
+    def chapter_context_exists(self, novel_id: str, number: int) -> bool:
+        return self._chapter_context_path(novel_id, number).is_file()
+
+    def list_chapter_contexts(self, novel_id: str) -> list[dict[str, Any]]:
+        contexts = []
+        for number in self.list_chapters(novel_id):
+            if self.chapter_context_exists(novel_id, number):
+                contexts.append(self.load_chapter_context(novel_id, number))
+        return contexts
 
     def _translation_path(self, novel_id: str, number: int, translation_id: str, chunk_index: int) -> Path:
         return self._chapter_dir(novel_id, number) / "translations" / slugify(translation_id, 40) / f"chunk_{chunk_index:03d}.json"

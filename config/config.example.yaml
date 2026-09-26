@@ -61,3 +61,13 @@ translation:
   retry:
     max_attempts: 2
 
+memory:
+  enabled: true
+  translation:
+    max_entries_per_request: 20
+    exact_match: true
+  context:
+    previous_chapters: 2
+    max_items: 20
+  conflict_policy: warn
+
