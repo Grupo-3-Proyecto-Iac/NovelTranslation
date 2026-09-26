@@ -1,0 +1,3 @@
+class GlossaryManager:
+    pass
+

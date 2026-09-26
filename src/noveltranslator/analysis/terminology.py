@@ -1,0 +1,3 @@
+class TerminologyAnalyzer:
+    pass
+

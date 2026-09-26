@@ -1,0 +1,3 @@
+class TextAnalyzer:
+    pass
+

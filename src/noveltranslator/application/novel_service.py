@@ -1,0 +1,3 @@
+class NovelService:
+    pass
+

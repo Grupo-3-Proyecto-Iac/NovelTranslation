@@ -1,0 +1,41 @@
+from enum import StrEnum
+
+
+class EntityType(StrEnum):
+    CHARACTER = "CHARACTER"
+    LOCATION = "LOCATION"
+    ABILITY = "ABILITY"
+    ITEM = "ITEM"
+    ORGANIZATION = "ORGANIZATION"
+    TITLE = "TITLE"
+    SPECIES = "SPECIES"
+    OTHER = "OTHER"
+
+
+class ProcessingState(StrEnum):
+    PENDING = "PENDING"
+    DOWNLOADING = "DOWNLOADING"
+    DOWNLOADED = "DOWNLOADED"
+    ANALYZING = "ANALYZING"
+    ANALYZED = "ANALYZED"
+    TRANSLATING = "TRANSLATING"
+    TRANSLATED = "TRANSLATED"
+    VALIDATING = "VALIDATING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    PAUSED = "PAUSED"
+
+
+class NovelStatus(StrEnum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class GlossaryStatus(StrEnum):
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+

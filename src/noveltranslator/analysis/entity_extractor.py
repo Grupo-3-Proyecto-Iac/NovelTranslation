@@ -1,0 +1,3 @@
+class EntityExtractor:
+    pass
+

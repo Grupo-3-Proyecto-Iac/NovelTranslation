@@ -1,0 +1,15 @@
+storage:
+  base_directory: data/novels
+
+access:
+  concurrency: 1
+  delay:
+    min_seconds: 8
+    max_seconds: 15
+  requests_per_minute: 4
+
+retry:
+  max_attempts: 3
+  base_delay_seconds: 30
+  max_delay_seconds: 300
+

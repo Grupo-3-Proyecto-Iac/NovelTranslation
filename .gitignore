@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.env
+dist/
+build/
+
+# Runtime data (keep directory placeholders, not generated content)
+data/novels/*
+data/cache/*
+data/sessions/*
+data/logs/*
+!data/**/.gitkeep
+

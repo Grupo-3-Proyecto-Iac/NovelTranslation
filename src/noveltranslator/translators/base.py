@@ -1,0 +1,3 @@
+class BaseTranslator:
+    name = "base"
+
