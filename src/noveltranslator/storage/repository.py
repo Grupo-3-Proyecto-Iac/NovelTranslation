@@ -110,6 +110,22 @@ class NovelRepository:
     def analysis_exists(self, novel_id: str, number: int) -> bool:
         return (self._chapter_dir(novel_id, number) / "analysis.json").is_file()
 
+    def save_chunks(self, novel_id: str, number: int, source_hash: str, chunks: list[dict[str, Any]]) -> None:
+        write_json_atomic(self._chapter_dir(novel_id, number) / "processing" / "chunks.json", {"source_hash": source_hash, "chunks": chunks})
+
+    def load_chunks(self, novel_id: str, number: int) -> dict[str, Any]:
+        return read_json(self._chapter_dir(novel_id, number) / "processing" / "chunks.json")
+
+    def chunks_exist(self, novel_id: str, number: int) -> bool:
+        return (self._chapter_dir(novel_id, number) / "processing" / "chunks.json").is_file()
+
+    def load_glossary(self, novel_id: str) -> dict[str, Any]:
+        path = self._require(novel_id) / "glossary.json"
+        return read_json(path) if path.exists() else {"terms": []}
+
+    def save_glossary(self, novel_id: str, payload: dict[str, Any]) -> None:
+        write_json_atomic(self._require(novel_id) / "glossary.json", payload)
+
     def _translation_path(self, novel_id: str, number: int, translation_id: str, chunk_index: int) -> Path:
         return self._chapter_dir(novel_id, number) / "translations" / slugify(translation_id, 40) / f"chunk_{chunk_index:03d}.json"
 

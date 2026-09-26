@@ -49,6 +49,10 @@ class ProgressManager:
         self.progress = replace(self.progress, last_completed_chapter=chapter, current_chapter=None, current_chunk=None, current_stage=ProcessingState.COMPLETED)
         return self._save()
 
+    def mark_analysis_completed(self, chapter: int) -> NovelProgress:
+        self.progress = replace(self.progress, last_completed_chapter=chapter, current_chapter=None, current_chunk=None, current_stage=ProcessingState.ANALYZED, error_type=None, error_message=None)
+        return self._save()
+
     def pause(self) -> NovelProgress:
         self.progress = replace(self.progress, overall_status=NovelStatus.PAUSED)
         return self._save()

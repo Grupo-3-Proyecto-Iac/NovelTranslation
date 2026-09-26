@@ -12,6 +12,13 @@ class EntityType(StrEnum):
     OTHER = "OTHER"
 
 
+class EntityStatus(StrEnum):
+    CANDIDATE = "CANDIDATE"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+    LOCKED = "LOCKED"
+
+
 class ProcessingState(StrEnum):
     PENDING = "PENDING"
     DOWNLOADING = "DOWNLOADING"
@@ -35,6 +42,9 @@ class NovelStatus(StrEnum):
 
 
 class GlossaryStatus(StrEnum):
+    CANDIDATE = "CANDIDATE"
+    CONFIRMED = "CONFIRMED"
+    LOCKED = "LOCKED"
     PROPOSED = "PROPOSED"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"

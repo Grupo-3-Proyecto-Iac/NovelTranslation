@@ -32,7 +32,7 @@ class StorageRepository(Protocol):
 
 
 class Analyzer(Protocol):
-    def analyze(self, text: str) -> dict[str, Any]: ...
+    def analyze(self, text: str | list[str], **kwargs: Any) -> dict[str, Any]: ...
 
 
 class NotImplementedComponent(ABC):

@@ -88,6 +88,34 @@ Los estados principales son `PENDING → DOWNLOADING → DOWNLOADED`; los errore
 
 `--limit` cuenta únicamente capítulos pendientes descargados en esa ejecución. También existen `--from-chapter`, `--to-chapter` y `--force` para selecciones explícitas. La política predeterminada ante error es `stop`, configurable en `config/config.yaml` o mediante `config.example.yaml`.
 
+## Processing and Analysis de Sprint 5
+
+Los capítulos descargados se preparan localmente con este flujo:
+
+```text
+source.json → normalize → split → analyze → glossary → analysis.json
+```
+
+La normalización solo limpia espacios y párrafos vacíos; no cambia mayúsculas, puntuación, comillas, diálogos ni Unicode. El hash SHA-256 se calcula sobre el texto normalizado y permite detectar cambios reproduciblemente.
+
+`TextSplitter` respeta límites de párrafo, usa tamaño objetivo/máximo configurable y divide párrafos excesivamente largos por oraciones antes de recurrir a cortes acotados. Los chunks se guardan en `chapters/NNN/processing/chunks.json` junto con `source_hash`, índices y límites de párrafo. Sus índices son estables para el mismo contenido/configuración.
+
+`AnalysisService` procesa únicamente capítulos con `source.json`, guarda entidades candidatas locales (sin IA), términos encontrados y metadata en `analysis.json`, y crea candidatos en `glossary.json`. Si el hash coincide, el análisis se omite; si cambia, se recalcula y se conserva la traducción futura separada.
+
+El `GlossaryManager` evita duplicados sin convertir la forma visible a minúsculas, permite actualizar, confirmar, rechazar y bloquear términos. Las decisiones `locked`/manuales tienen prioridad y no son reemplazadas por candidatos automáticos. `ContextBuilder` prepara el chunk actual, contexto anterior limitado, entidades y solo los términos del glosario que aparecen en ese contexto.
+
+Comandos:
+
+```bash
+noveltranslator analyze NOVEL_ID --limit 1
+noveltranslator glossary list NOVEL_ID
+noveltranslator glossary show NOVEL_ID "Shadow Sovereign"
+noveltranslator glossary set NOVEL_ID "Shadow Sovereign" --translation "Shadow Sovereign"
+noveltranslator glossary lock NOVEL_ID "Shadow Sovereign"
+```
+
+El análisis usa los estados `ANALYZING` y `ANALYZED`, actualiza `progress.json` y puede reanudarse con `resume NOVEL_ID`. No se han añadido modelos de traducción, IA, embeddings ni dependencias pesadas.
+
 ## Access Layer de Sprint 2
 
 Las fuentes futuras deben acceder a Internet mediante esta cadena:

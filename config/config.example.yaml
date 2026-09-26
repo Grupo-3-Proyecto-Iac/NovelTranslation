@@ -34,3 +34,15 @@ download:
   skip_existing: true
   refresh_metadata: true
 
+processing:
+  chunking:
+    max_characters: 6000
+    target_characters: 4500
+    overlap_paragraphs: 1
+
+analysis:
+  context:
+    previous_chunks: 1
+    include_glossary: true
+    include_entities: true
+

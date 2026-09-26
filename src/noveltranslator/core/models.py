@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from .enums import EntityType, GlossaryStatus, NovelStatus, ProcessingState
+from .enums import EntityStatus, EntityType, GlossaryStatus, NovelStatus, ProcessingState
 
 
 @dataclass
@@ -33,6 +33,10 @@ class Chunk:
     chapter_number: int
     index: int
     source_text: str
+    paragraph_start: int | None = None
+    paragraph_end: int | None = None
+    previous_context: str | None = None
+    next_context: str | None = None
 
 
 @dataclass
@@ -42,16 +46,22 @@ class Entity:
     confidence: float | None = None
     preserve: bool = False
     translation: str | None = None
+    status: EntityStatus = EntityStatus.CANDIDATE
+    first_seen_chapter: int | None = None
+    first_seen_chunk: int | None = None
 
 
 @dataclass
 class GlossaryTerm:
     term: str
     type: EntityType | str
-    translation: str
+    translation: str | None = None
     locked: bool = False
     status: GlossaryStatus = GlossaryStatus.PROPOSED
     source: str | None = None
+    preserve: bool = False
+    first_seen_chapter: int | None = None
+    first_seen_chunk: int | None = None
 
 
 @dataclass

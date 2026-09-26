@@ -7,7 +7,12 @@ from noveltranslator.access.manager import AccessManager
 from noveltranslator.access.models import AccessConfig, RetryConfig
 from noveltranslator.application.resume_service import ResumeService
 from noveltranslator.application.download_service import DownloadService
+from noveltranslator.application.analysis_service import AnalysisService
 from noveltranslator.core.models import Chapter
+from noveltranslator.core.models import GlossaryTerm
+from noveltranslator.core.enums import GlossaryStatus
+from noveltranslator.processing.glossary import GlossaryManager
+from noveltranslator.processing.splitter import TextSplitter
 from noveltranslator.infrastructure.config import load_yaml
 from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
 from noveltranslator.sources.loader import default_registry
@@ -17,9 +22,11 @@ app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web
 source_app = typer.Typer(help="Gestiona las fuentes registradas.")
 novel_app = typer.Typer(help="Gestiona novelas almacenadas localmente.")
 access_app = typer.Typer(help="Diagnósticos controlados de acceso HTTP.")
+glossary_app = typer.Typer(help="Consulta y edición manual del glosario.")
 app.add_typer(source_app, name="source")
 app.add_typer(novel_app, name="novel")
 app.add_typer(access_app, name="access")
+app.add_typer(glossary_app, name="glossary")
 
 
 def repository() -> NovelRepository:
@@ -44,6 +51,16 @@ def download_service(manager: AccessManager) -> DownloadService:
     values = load_yaml(config_path)
     options = values.get("download", {})
     return DownloadService(default_registry(manager), repository(), on_chapter_error=options.get("on_chapter_error", "stop"), skip_existing=bool(options.get("skip_existing", True)), refresh_metadata=bool(options.get("refresh_metadata", True)))
+
+
+def analysis_service() -> AnalysisService:
+    config_path = CONFIG_ROOT / "config.yaml"
+    if not config_path.is_file():
+        config_path = CONFIG_ROOT / "config.example.yaml"
+    values = load_yaml(config_path)
+    chunking = values.get("processing", {}).get("chunking", {})
+    splitter = TextSplitter(max_characters=int(chunking.get("max_characters", 6000)), target_characters=int(chunking.get("target_characters", 4500)), overlap_paragraphs=int(chunking.get("overlap_paragraphs", 1)))
+    return AnalysisService(repository(), splitter=splitter)
 
 
 @source_app.command("list")
@@ -74,6 +91,17 @@ def access_check(url: str = typer.Argument(..., help="Una URL HTTP/HTTPS"), no_d
     typer.echo(f"Attempts: {response.attempts}")
     typer.echo(f"Final URL: {response.final_url}")
     typer.echo(f"Response size: {response.size_bytes / 1024:.1f} KB")
+
+
+@app.command()
+def analyze(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0), force: bool = typer.Option(False, "--force")) -> None:
+    summary = analysis_service().analyze_novel(novel_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"Analyzed now: {summary.analyzed_now}")
+    typer.echo(f"Skipped: {summary.skipped}")
+    typer.echo(f"Failed: {summary.failed}")
+    typer.echo(f"Pending: {summary.pending}")
+    typer.echo("Status: ANALYSIS COMPLETED" if summary.completed else "Status: INCOMPLETE")
 
 
 @novel_app.command("list")
@@ -161,12 +189,52 @@ def resume(novel_id: str | None = typer.Argument(None, help="Identificador local
             typer.echo(f"   Stage: {job.stage.value if job.stage else '-'}")
             typer.echo(f"   Chunk: {job.chunk if job.chunk is not None else '-'} / {job.total_chunks if job.total_chunks is not None else '-'}")
         return
+    pending = next((job for job in ResumeService(repository()).find_pending_jobs() if job.novel_id == novel_id), None)
+    if pending and pending.stage and pending.stage.value == "ANALYZING":
+        summary = analysis_service().analyze_novel(novel_id, limit=limit)
+        typer.echo(f"Analysis resumed: {summary.analyzed_now} analyzed, {summary.pending} pending")
+        return
     manager = access_manager()
     try:
         summary = download_service(manager).resume_novel(novel_id, limit=limit)
     finally:
         manager.close()
     _display_download_summary(summary)
+
+
+@glossary_app.command("list")
+def glossary_list(novel_id: str = typer.Argument(...)) -> None:
+    for item in GlossaryManager(repository(), novel_id).list_terms():
+        lock = " locked" if item.locked else ""
+        typer.echo(f"{item.term} -> {item.translation or '-'} [{item.status.value}]{lock}")
+
+
+@glossary_app.command("show")
+def glossary_show(novel_id: str = typer.Argument(...), term: str = typer.Argument(...)) -> None:
+    item = GlossaryManager(repository(), novel_id).get(term)
+    if item is None:
+        raise typer.BadParameter(f"Term not found: {term}")
+    typer.echo(f"Term: {item.term}")
+    typer.echo(f"Type: {item.type}")
+    typer.echo(f"Translation: {item.translation or '-'}")
+    typer.echo(f"Status: {item.status.value}")
+    typer.echo(f"Locked: {item.locked}")
+
+
+@glossary_app.command("lock")
+def glossary_lock(novel_id: str = typer.Argument(...), term: str = typer.Argument(...)) -> None:
+    item = GlossaryManager(repository(), novel_id).lock(term)
+    typer.echo(f"Locked: {item.term}")
+
+
+@glossary_app.command("set")
+def glossary_set(novel_id: str = typer.Argument(...), term: str = typer.Argument(...), translation: str = typer.Option(..., "--translation")) -> None:
+    manager = GlossaryManager(repository(), novel_id)
+    if manager.exists(term):
+        item = manager.update(term, translation=translation, status=GlossaryStatus.CONFIRMED, source="manual")
+    else:
+        item = manager.add(GlossaryTerm(term, "OTHER", translation, False, GlossaryStatus.CONFIRMED, "manual"))
+    typer.echo(f"Updated: {item.term} -> {item.translation}")
 
 
 @app.command()
