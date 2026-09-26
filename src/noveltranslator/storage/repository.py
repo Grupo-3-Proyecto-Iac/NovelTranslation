@@ -138,6 +138,12 @@ class NovelRepository:
     def translation_chunk_exists(self, novel_id: str, number: int, translation_id: str, chunk_index: int) -> bool:
         return self._translation_path(novel_id, number, translation_id, chunk_index).is_file()
 
+    def list_translation_chunks(self, novel_id: str, number: int, translation_id: str) -> list[int]:
+        directory = self._chapter_dir(novel_id, number) / "translations" / slugify(translation_id, 40)
+        if not directory.is_dir():
+            return []
+        return sorted(int(path.stem.split("_")[-1]) for path in directory.glob("chunk_*.json") if path.stem.split("_")[-1].isdigit())
+
     def save_progress(self, progress: NovelProgress | dict[str, Any], novel_id: str | None = None) -> None:
         identifier = novel_id or progress.novel_id
         self._require(identifier)

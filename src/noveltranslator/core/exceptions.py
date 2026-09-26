@@ -41,3 +41,23 @@ class InvalidChapterContentError(SourceError):
 class AccessBlockedError(SourceError):
     pass
 
+
+class TranslationError(NovelTranslatorError):
+    pass
+
+
+class TranslatorUnavailableError(TranslationError):
+    pass
+
+
+class TranslationTimeoutError(TranslationError):
+    pass
+
+
+class TranslationFailedError(TranslationError):
+    pass
+
+
+class InvalidTranslationError(TranslationError):
+    pass
+

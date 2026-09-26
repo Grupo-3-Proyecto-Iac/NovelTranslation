@@ -6,7 +6,7 @@ Aplicación Python modular para adquirir novelas web, conservar el original, ana
 
 ## Estado actual
 
-Sprint 0 y Sprint 1 están completados: arquitectura modular y persistencia local. No implementa scraping, Lorenovels, Playwright, traducción, modelos de IA, SQLite ni exportación EPUB funcional.
+Sprint 0 a Sprint 6 están completados: arquitectura modular, persistencia, acceso, fuente, procesamiento y traducción incremental. No implementa todavía modelos pesados, descarga paralela, SQLite ni exportación EPUB funcional.
 
 ## Arquitectura
 
@@ -60,7 +60,7 @@ noveltranslator status NOVEL_ID
 noveltranslator resume
 ```
 
-Los comandos `inspect`, `download`, `translate` y `export` permanecen como puntos de entrada futuros y no realizan operaciones web o de traducción.
+`inspect` y `download` realizan adquisición controlada; `translate` ejecuta traducción incremental con `mock` u `ollama`; `export` sigue siendo un punto de entrada futuro.
 
 `download` ya es el primer flujo operativo completo de adquisición:
 
@@ -145,6 +145,24 @@ noveltranslator access check https://example.com --no-delay
 Una fuente futura implementa `NovelSource` (`can_handle`, `get_novel`, `get_chapters`, `get_chapter`) y se registra con `registry.register(source)`. Después puede resolverse por URL con `registry.resolve(url)`, sin acoplar el core a un sitio concreto.
 
 Lorenovels es la primera implementación real. Reconoce `lorenovels.com` y `www.lorenovels.com`, obtiene metadata y capítulos mediante HTTPX/`AccessManager`, y extrae capítulos individuales desde el contenedor WordPress `.entry-content.wp-block-post-content`. La fuente no guarda datos, no descarga masivamente y no intenta resolver CAPTCHA; si el acceso está bloqueado, lo reporta.
+
+## Translation de Sprint 6
+
+El motor de traducción procesa capítulos que ya tienen `source.json` y `processing/chunks.json`. Cada chunk se traduce secuencialmente y se guarda en `translations/<translation-id>/chunk_NNN.json`, conservando texto original, hash, traductor y modelo.
+
+`TranslationService` construye contexto con chunks anteriores, glosario y entidades. Los términos bloqueados o marcados para preservar se protegen con placeholders resistentes a colisiones, se restauran y se validan antes de persistir. Si cambia el hash del original, el resultado deja de ser válido y se reprocesa.
+
+El backend `mock` sirve para pruebas y desarrollo local. `ollama` es un adaptador opcional que llama a un servidor Ollama local ya instalado; NovelTranslator no instala Ollama ni descarga modelos.
+
+```bash
+noveltranslator translator list
+noveltranslator translate NOVEL_ID --translator mock
+noveltranslator translate NOVEL_ID --limit 1 --translation-id default
+noveltranslator translation show NOVEL_ID 1 1
+noveltranslator resume NOVEL_ID
+```
+
+La traducción es idempotente por hash y checkpoint: los chunks válidos existentes se omiten y una interrupción deja progreso para `resume`. `--force` permite reprocesar explícitamente.
 
 ## Roadmap
 

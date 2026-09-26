@@ -20,6 +20,7 @@ class ProgressManager:
                 current_chunk=data.get("current_chunk"), total_chunks=data.get("total_chunks"),
                 last_completed_chapter=data.get("last_completed_chapter"), updated_at=data.get("updated_at", ""),
                 error_type=data.get("error_type"), error_message=data.get("error_message"),
+                translation_id=data.get("translation_id"),
             )
         else:
             self.progress = NovelProgress(novel_id=novel_id)
@@ -43,6 +44,14 @@ class ProgressManager:
 
     def set_chunk_progress(self, chunk: int, total_chunks: int | None = None) -> NovelProgress:
         self.progress = replace(self.progress, current_chunk=chunk, total_chunks=total_chunks or self.progress.total_chunks)
+        return self._save()
+
+    def set_translation_id(self, translation_id: str) -> NovelProgress:
+        self.progress = replace(self.progress, translation_id=translation_id)
+        return self._save()
+
+    def mark_translation_completed(self, chapter: int) -> NovelProgress:
+        self.progress = replace(self.progress, last_completed_chapter=chapter, current_chapter=None, current_chunk=None, current_stage=ProcessingState.TRANSLATED, error_type=None, error_message=None)
         return self._save()
 
     def mark_chapter_completed(self, chapter: int) -> NovelProgress:

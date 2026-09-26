@@ -46,3 +46,18 @@ analysis:
     include_glossary: true
     include_entities: true
 
+translation:
+  provider: mock
+  source_language: en
+  target_language: es
+  model: qwen2.5:7b
+  context:
+    previous_chunks: 1
+  behavior:
+    preserve_locked_terms: true
+    skip_existing: true
+  output:
+    translation_id: default
+  retry:
+    max_attempts: 2
+

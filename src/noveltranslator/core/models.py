@@ -87,6 +87,7 @@ class NovelProgress:
     updated_at: str = ""
     error_type: str | None = None
     error_message: str | None = None
+    translation_id: str | None = None
 
 
 @dataclass(frozen=True)

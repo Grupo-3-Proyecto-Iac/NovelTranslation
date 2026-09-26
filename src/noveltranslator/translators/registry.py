@@ -1,10 +1,15 @@
+from .base import Translator
+
+
 class TranslatorRegistry:
     def __init__(self) -> None:
-        self._translators = {}
+        self._translators: dict[str, Translator] = {}
 
-    def register(self, translator) -> None:
-        self._translators[translator.name] = translator
+    def register(self, translator: Translator) -> None:
+        self._translators[translator.id] = translator
 
-    def resolve(self, name: str):
-        return self._translators[name]
+    def resolve(self, translator_id: str) -> Translator:
+        return self._translators[translator_id]
 
+    def list(self) -> tuple[str, ...]:
+        return tuple(sorted(self._translators))

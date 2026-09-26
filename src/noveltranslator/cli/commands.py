@@ -8,6 +8,7 @@ from noveltranslator.access.models import AccessConfig, RetryConfig
 from noveltranslator.application.resume_service import ResumeService
 from noveltranslator.application.download_service import DownloadService
 from noveltranslator.application.analysis_service import AnalysisService
+from noveltranslator.application.translation_service import TranslationService
 from noveltranslator.core.models import Chapter
 from noveltranslator.core.models import GlossaryTerm
 from noveltranslator.core.enums import GlossaryStatus
@@ -17,6 +18,7 @@ from noveltranslator.infrastructure.config import load_yaml
 from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
 from noveltranslator.sources.loader import default_registry
 from noveltranslator.storage.repository import NovelRepository
+from noveltranslator.translators import MockTranslator, OllamaTranslator, TranslatorRegistry
 
 app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web.")
 source_app = typer.Typer(help="Gestiona las fuentes registradas.")
@@ -27,6 +29,10 @@ app.add_typer(source_app, name="source")
 app.add_typer(novel_app, name="novel")
 app.add_typer(access_app, name="access")
 app.add_typer(glossary_app, name="glossary")
+translator_app = typer.Typer(help="Gestiona los traductores disponibles.")
+translation_app = typer.Typer(help="Consulta traducciones persistidas.")
+app.add_typer(translator_app, name="translator")
+app.add_typer(translation_app, name="translation")
 
 
 def repository() -> NovelRepository:
@@ -63,6 +69,23 @@ def analysis_service() -> AnalysisService:
     return AnalysisService(repository(), splitter=splitter)
 
 
+def translation_registry() -> tuple[TranslatorRegistry, dict]:
+    config_path = CONFIG_ROOT / "config.yaml"
+    if not config_path.is_file():
+        config_path = CONFIG_ROOT / "config.example.yaml"
+    values = load_yaml(config_path)
+    options = values.get("translation", {})
+    registry = TranslatorRegistry()
+    registry.register(MockTranslator())
+    registry.register(OllamaTranslator(model=str(options.get("model", "qwen2.5:7b"))))
+    return registry, options
+
+
+def close_translation_registry(registry: TranslatorRegistry) -> None:
+    for translator_id in registry.list():
+        registry.resolve(translator_id).close()
+
+
 @source_app.command("list")
 def source_list() -> None:
     registry = default_registry()
@@ -72,6 +95,17 @@ def source_list() -> None:
     finally:
         for source in registry.list():
             source.access_manager.close()
+
+
+@translator_app.command("list")
+def translator_list() -> None:
+    registry, _ = translation_registry()
+    try:
+        for translator_id in registry.list():
+            translator = registry.resolve(translator_id)
+            typer.echo(f"{translator.id}\t{translator.model_id}")
+    finally:
+        close_translation_registry(registry)
 
 
 @access_app.command("check")
@@ -171,8 +205,34 @@ def _display_download_summary(summary) -> None:
 
 
 @app.command()
-def translate(url: str = typer.Argument(..., help="URL de la novela")) -> None:
-    typer.echo(f"Traducción aún no implementada para: {url}")
+def translate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), translator: str | None = typer.Option(None, "--translator"), force: bool = typer.Option(False, "--force")) -> None:
+    registry, options = translation_registry()
+    selected = translator or str(options.get("provider", "mock"))
+    try:
+        attempts = int(options.get("retry", {}).get("max_attempts", 1))
+        summary = TranslationService(repository(), registry, max_attempts=attempts).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
+    finally:
+        close_translation_registry(registry)
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"Translator: {selected}")
+    typer.echo(f"Translated now: {summary.chunks_translated}")
+    typer.echo(f"Skipped: {summary.chunks_skipped}")
+    typer.echo(f"Failed: {summary.chunks_failed}")
+    typer.echo(f"Pending: {summary.pending}")
+    typer.echo("Status: PAUSED" if summary.paused else "Status: TRANSLATION COMPLETED" if summary.completed else "Status: INCOMPLETE")
+    return
+
+
+@translation_app.command("show")
+def translation_show(novel_id: str = typer.Argument(...), chapter: int = typer.Argument(..., min=1), chunk: int = typer.Argument(..., min=0), translation_id: str = typer.Option("default", "--translation-id")) -> None:
+    data = repository().load_translation_chunk(novel_id, chapter, translation_id, chunk)
+    typer.echo(f"Novel: {novel_id}")
+    typer.echo(f"Chapter: {chapter:03d}  Chunk: {chunk:03d}")
+    typer.echo(f"Translator: {data.get('translator_id', '-')} / {data.get('model_id', '-')}")
+    typer.echo("Source:")
+    typer.echo(data.get("source_text", ""))
+    typer.echo("Translation:")
+    typer.echo(data.get("translated_text", ""))
 
 
 @app.command()
@@ -193,6 +253,16 @@ def resume(novel_id: str | None = typer.Argument(None, help="Identificador local
     if pending and pending.stage and pending.stage.value == "ANALYZING":
         summary = analysis_service().analyze_novel(novel_id, limit=limit)
         typer.echo(f"Analysis resumed: {summary.analyzed_now} analyzed, {summary.pending} pending")
+        return
+    if pending and pending.stage and pending.stage.value == "TRANSLATING":
+        progress = repository().load_progress(novel_id)
+        registry, options = translation_registry()
+        try:
+            attempts = int(options.get("retry", {}).get("max_attempts", 1))
+            summary = TranslationService(repository(), registry, max_attempts=attempts).translate_novel(novel_id, translation_id=progress.get("translation_id") or "default", translator_id=str(options.get("provider", "mock")), source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit)
+        finally:
+            close_translation_registry(registry)
+        typer.echo(f"Translation resumed: {summary.chunks_translated} translated, {summary.pending} pending")
         return
     manager = access_manager()
     try:
@@ -257,11 +327,14 @@ def status(novel_id: str = typer.Argument(..., help="Identificador de novela")) 
     typer.echo(f"Downloaded: {downloaded}")
     typer.echo(f"Pending: {len(chapter_numbers) - downloaded - failed}")
     typer.echo(f"Failed: {failed}")
+    translation_id = progress.get("translation_id", "default") if progress else "default"
+    translated_chunks = sum(len(repo.list_translation_chunks(novel_id, number, translation_id)) for number in chapter_numbers)
+    typer.echo(f"Translated chunks: {translated_chunks}")
     if progress is None:
         typer.echo("Progress: not started")
         return
     typer.echo(f"Status: {progress.get('overall_status', 'UNKNOWN')}")
-    typer.echo("Current task: DOWNLOAD")
+    typer.echo(f"Current task: {progress.get('current_stage', 'DOWNLOAD')}")
     typer.echo(f"Chapter: {progress.get('current_chapter', '-')}")
     typer.echo(f"Stage: {progress.get('current_stage', '-')}")
     typer.echo(f"Chunk: {progress.get('current_chunk', '-')} / {progress.get('total_chunks', '-')}")
