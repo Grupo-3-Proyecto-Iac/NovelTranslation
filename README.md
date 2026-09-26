@@ -62,6 +62,32 @@ noveltranslator resume
 
 Los comandos `inspect`, `download`, `translate` y `export` permanecen como puntos de entrada futuros y no realizan operaciones web o de traducción.
 
+`download` ya es el primer flujo operativo completo de adquisición:
+
+```bash
+noveltranslator download URL --limit 3
+noveltranslator resume NOVEL_ID
+noveltranslator status NOVEL_ID
+```
+
+## Download pipeline de Sprint 4
+
+El flujo es secuencial y persistente:
+
+```text
+URL → SourceRegistry → Source → Storage → capítulo → source.json → checkpoint → siguiente capítulo
+```
+
+`DownloadService` coordina el proceso, pero no conoce HTML específico. La fuente resuelve metadata y capítulos; el repositorio registra los artefactos; `ProgressManager` escribe checkpoints antes y después de cada capítulo. `AccessManager` mantiene timeout, rate limiting y retries.
+
+En la primera ejecución se registra la novela, se actualiza su metadata y se registran todos los capítulos. En ejecuciones posteriores se vuelven a consultar metadata/lista de capítulos para detectar publicaciones nuevas, pero un `source.json` válido se considera evidencia principal y el capítulo se salta sin otra request de capítulo. Los capítulos locales nunca se borran automáticamente.
+
+`source.json` es válido cuando es JSON correcto, contiene una lista `paragraphs` no vacía y todos sus elementos son texto no vacío. Un archivo corrupto no se reemplaza silenciosamente: el capítulo queda `FAILED`, se registra el error y puede repararse explícitamente con `--force`.
+
+Los estados principales son `PENDING → DOWNLOADING → DOWNLOADED`; los errores quedan en `FAILED` y `resume NOVEL_ID` vuelve a evaluar el capítulo fallido. `Ctrl+C` marca el capítulo actual como `PAUSED` y conserva el checkpoint. `resume` sin identificador solo lista tareas; `resume NOVEL_ID` ejecuta la continuación.
+
+`--limit` cuenta únicamente capítulos pendientes descargados en esa ejecución. También existen `--from-chapter`, `--to-chapter` y `--force` para selecciones explícitas. La política predeterminada ante error es `stop`, configurable en `config/config.yaml` o mediante `config.example.yaml`.
+
 ## Access Layer de Sprint 2
 
 Las fuentes futuras deben acceder a Internet mediante esta cadena:

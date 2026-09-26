@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from noveltranslator.core.enums import NovelStatus, ProcessingState
 from noveltranslator.core.models import PendingJob
 from noveltranslator.storage.repository import NovelRepository
@@ -15,7 +13,7 @@ class ResumeService:
             if not self.repository.progress_exists(novel_id):
                 continue
             progress = self.repository.load_progress(novel_id)
-            if progress.get("overall_status") in {NovelStatus.COMPLETED.value, NovelStatus.FAILED.value}:
+            if progress.get("overall_status") == NovelStatus.COMPLETED.value:
                 continue
             if progress.get("current_chapter") is not None or progress.get("overall_status") == NovelStatus.PAUSED.value:
                 jobs.append(PendingJob(novel_id, progress.get("current_chapter"), ProcessingState(progress["current_stage"]) if progress.get("current_stage") else None, progress.get("current_chunk"), progress.get("total_chunks")))

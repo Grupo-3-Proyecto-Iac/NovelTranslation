@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 from noveltranslator.cli.commands import app
+from noveltranslator.application.download_service import DownloadSummary
 from noveltranslator.core.models import Chapter, Novel
 
 
@@ -44,4 +45,23 @@ def test_inspect_uses_registered_source_without_network(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Fixture Novel" in result.stdout
     assert "Found: 1" in result.stdout
+
+
+def test_download_cli_delegates_to_service(monkeypatch) -> None:
+    class FakeManager:
+        def close(self):
+            pass
+
+    class FakeService:
+        def download_novel(self, url, **kwargs):
+            assert url == "https://example.test/novel"
+            assert kwargs["limit"] == 1
+            return DownloadSummary("fake-novel", 2, downloaded_now=1, pending=1)
+
+    monkeypatch.setattr("noveltranslator.cli.commands.access_manager", lambda: FakeManager())
+    monkeypatch.setattr("noveltranslator.cli.commands.download_service", lambda manager: FakeService())
+    result = CliRunner().invoke(app, ["download", "https://example.test/novel", "--limit", "1"])
+    assert result.exit_code == 0
+    assert "Downloaded now: 1" in result.stdout
+    assert "Pending: 1" in result.stdout
 

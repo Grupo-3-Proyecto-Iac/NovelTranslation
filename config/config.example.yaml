@@ -29,3 +29,8 @@ retry:
   backoff_factor: 2
   max_retry_after_seconds: 300
 
+download:
+  on_chapter_error: stop
+  skip_existing: true
+  refresh_metadata: true
+

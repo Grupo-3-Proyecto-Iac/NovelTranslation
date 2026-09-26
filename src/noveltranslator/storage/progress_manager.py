@@ -19,6 +19,7 @@ class ProgressManager:
                 current_chapter=data.get("current_chapter"), current_stage=ProcessingState(data["current_stage"]) if data.get("current_stage") else None,
                 current_chunk=data.get("current_chunk"), total_chunks=data.get("total_chunks"),
                 last_completed_chapter=data.get("last_completed_chapter"), updated_at=data.get("updated_at", ""),
+                error_type=data.get("error_type"), error_message=data.get("error_message"),
             )
         else:
             self.progress = NovelProgress(novel_id=novel_id)
@@ -29,7 +30,7 @@ class ProgressManager:
         return self.progress
 
     def start_novel(self) -> NovelProgress:
-        self.progress = replace(self.progress, overall_status=NovelStatus.IN_PROGRESS)
+        self.progress = replace(self.progress, overall_status=NovelStatus.IN_PROGRESS, error_type=None, error_message=None)
         return self._save()
 
     def set_current_chapter(self, chapter: int, total_chunks: int | None = None) -> NovelProgress:
@@ -54,6 +55,10 @@ class ProgressManager:
 
     def fail(self) -> NovelProgress:
         self.progress = replace(self.progress, overall_status=NovelStatus.FAILED, current_stage=ProcessingState.FAILED)
+        return self._save()
+
+    def mark_chapter_failed(self, chapter: int, error: Exception) -> NovelProgress:
+        self.progress = replace(self.progress, overall_status=NovelStatus.FAILED, current_chapter=chapter, current_stage=ProcessingState.FAILED, error_type=type(error).__name__, error_message=str(error)[:500])
         return self._save()
 
     def complete(self) -> NovelProgress:

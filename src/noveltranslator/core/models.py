@@ -75,6 +75,8 @@ class NovelProgress:
     total_chunks: int | None = None
     last_completed_chapter: int | None = None
     updated_at: str = ""
+    error_type: str | None = None
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,6 @@ def slugify(value: str, max_length: int = 80) -> str:
 
 
 def chapter_directory_name(number: int, width: int = 3) -> str:
-    if number < 1:
-        raise ValueError("chapter number must be positive")
+    if number < 0:
+        raise ValueError("chapter number cannot be negative")
     return str(number).zfill(max(width, len(str(number))))
