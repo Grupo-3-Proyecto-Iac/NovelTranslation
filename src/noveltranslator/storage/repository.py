@@ -1,6 +1,7 @@
 """Filesystem repositories for novels, chapters, artifacts, and progress."""
 
 from pathlib import Path
+import logging
 from typing import Any
 
 from noveltranslator.core.models import Chapter, ChapterState, Novel, NovelProgress
@@ -8,6 +9,8 @@ from noveltranslator.core.exceptions import ChapterNotFoundError, NovelNotFoundE
 
 from .identifiers import chapter_directory_name, slugify
 from .serialization import read_json, utc_now_iso, write_json_atomic
+
+logger = logging.getLogger("noveltranslator.storage")
 
 
 class NovelRepository:
@@ -37,6 +40,7 @@ class NovelRepository:
         for filename, initial in (("glossary.json", {"terms": []}), ("translation_memory.json", {"entries": []})):
             if not (directory / filename).exists():
                 write_json_atomic(directory / filename, initial)
+        logger.info("Novel created: %s", identifier)
         return identifier
 
     def novel_exists(self, novel_id: str) -> bool:
@@ -54,6 +58,7 @@ class NovelRepository:
         current.update(metadata)
         current["updated_at"] = utc_now_iso()
         write_json_atomic(directory / "metadata.json", current)
+        logger.info("Novel metadata saved: %s", novel_id)
 
     def load_novel_metadata(self, novel_id: str) -> dict[str, Any]:
         return read_json(self._require(novel_id) / "metadata.json")
@@ -64,6 +69,7 @@ class NovelRepository:
         metadata_path = directory / "metadata.json"
         if not metadata_path.exists():
             write_json_atomic(metadata_path, {"number": chapter.number, "title": chapter.title, "url": chapter.url, "status": chapter.status.value, "updated_at": utc_now_iso()})
+            logger.info("Chapter metadata saved: %s/%03d", novel_id, chapter.number)
         return directory
 
     def chapter_exists(self, novel_id: str, number: int) -> bool:
@@ -81,6 +87,7 @@ class NovelRepository:
         current.update(metadata)
         current["updated_at"] = utc_now_iso()
         write_json_atomic(directory / "metadata.json", current)
+        logger.info("Chapter metadata updated: %s/%03d", novel_id, number)
 
     def load_chapter_metadata(self, novel_id: str, number: int) -> dict[str, Any]:
         return read_json(self._chapter_dir(novel_id, number) / "metadata.json")
@@ -119,6 +126,7 @@ class NovelRepository:
         identifier = novel_id or progress.novel_id
         self._require(identifier)
         write_json_atomic(self._dir(identifier) / "progress.json", progress)
+        logger.info("Progress updated: %s", identifier)
 
     def load_progress(self, novel_id: str) -> dict[str, Any]:
         return read_json(self._require(novel_id) / "progress.json")
