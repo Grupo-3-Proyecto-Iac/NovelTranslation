@@ -11,7 +11,7 @@ from noveltranslator.application.analysis_service import AnalysisService
 from noveltranslator.application.translation_service import TranslationService
 from noveltranslator.application.export_service import ExportService
 from noveltranslator.core.models import Chapter, TranslationMemoryEntry
-from noveltranslator.core.exceptions import ExportError
+from noveltranslator.core.exceptions import ExportError, NovelTranslatorError
 from noveltranslator.core.models import GlossaryTerm
 from noveltranslator.core.enums import GlossaryStatus
 from noveltranslator.processing.glossary import GlossaryManager
@@ -269,6 +269,9 @@ def translate(novel_id: str = typer.Argument(..., help="Identificador local de n
     selected = translator or str(options.get("provider", "mock"))
     try:
         summary = translation_service(registry, options).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
+    except NovelTranslatorError as error:
+        typer.echo(f"Translation failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
     finally:
         close_translation_registry(registry)
     typer.echo(f"Novel: {summary.novel_id}")
