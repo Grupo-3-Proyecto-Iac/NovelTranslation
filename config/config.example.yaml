@@ -1,6 +1,10 @@
 storage:
   base_directory: data/novels
 
+language:
+  source: en
+  target: es
+
 access:
   timeout:
     connect_seconds: 10

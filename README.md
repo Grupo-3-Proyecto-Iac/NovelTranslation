@@ -6,7 +6,7 @@ Aplicación Python modular para adquirir novelas web, conservar el original, ana
 
 ## Estado actual
 
-Sprint 0 a Sprint 6 están completados: arquitectura modular, persistencia, acceso, fuente, procesamiento y traducción incremental. No implementa todavía modelos pesados, descarga paralela, SQLite ni exportación EPUB funcional.
+Sprint 0 a Sprint 10 están completados: arquitectura modular, persistencia, acceso, fuente, procesamiento, traducción incremental, validación y exportación. El MVP mantiene fuera GUI, API web, SQLite, descarga paralela y modelos pesados obligatorios.
 
 ## Arquitectura
 
@@ -60,7 +60,7 @@ noveltranslator status NOVEL_ID
 noveltranslator resume
 ```
 
-`inspect` y `download` realizan adquisición controlada; `translate` ejecuta traducción incremental con `mock` u `ollama`; `export` sigue siendo un punto de entrada futuro.
+`inspect` y `download` realizan adquisición controlada; `translate`, `validate` y `export` completan el flujo local del MVP con `mock` u `ollama` opcional.
 
 `download` ya es el primer flujo operativo completo de adquisición:
 
@@ -225,6 +225,12 @@ noveltranslator translate NOVEL_ID
 noveltranslator validate NOVEL_ID
 noveltranslator export NOVEL_ID --format epub
 ```
+
+## Estado final del MVP (0.1.0)
+
+El flujo soportado es `download -> analyze -> translate -> validate -> export`, con persistencia local, reanudación e idempotencia. Los formatos de exportación son TXT, JSON, HTML y EPUB. La suite local cubre storage, acceso, fuentes, procesamiento, traducción, memoria, validación, exportación y un pipeline E2E con mocks.
+
+El backend real opcional es Ollama; la instalación base no descarga modelos ni navegadores. Lorenovels es la fuente real incluida actualmente. La exportación no realiza red y los warnings de validación requieren autorización explícita.
 
 ## Roadmap
 
