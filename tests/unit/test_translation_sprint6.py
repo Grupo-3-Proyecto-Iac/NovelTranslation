@@ -38,14 +38,15 @@ def test_translation_persists_and_is_idempotent(tmp_path: Path) -> None:
     assert first.completed is True
     assert first.chunks_translated == 1
     assert "Espada Lunar" in saved["translated_text"]
+    assert "\n\n" in saved["translated_text"]
     assert saved["source_hash"]
     assert saved["translator_id"] == "mock"
-    assert translator.calls == 1
+    assert translator.calls == 2
 
     second = TranslationService(repo, registry).translate_novel(novel_id)
     assert second.chunks_skipped == 1
     assert second.chunks_translated == 0
-    assert translator.calls == 1
+    assert translator.calls == 2
 
 
 def test_protection_handles_nested_terms_and_collisions() -> None:

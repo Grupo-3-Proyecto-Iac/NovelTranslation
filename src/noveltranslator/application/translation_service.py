@@ -131,22 +131,35 @@ class TranslationService:
             locked_keys = {normalized_key(term.term) for term in glossary if term.locked or term.status is GlossaryStatus.CONFIRMED}
             relevant_memory = [item for item in relevant_memory if normalized_key(item.source_text) not in locked_keys]
             relevant_context = memory.find_context(chunk.source_text, chapter_number=number, translation_id=translation_id, previous_chapters=self.previous_chapters, max_items=self.max_context_items) if self.memory_enabled else []
-            context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk, previous, glossary, entities, relevant_memory, relevant_context)
-            protected_text, replacements, protected_terms = self.protector.protect(chunk.source_text, context.glossary_terms)
-            request = TranslationRequest(protected_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, protected_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context)
-            result = None
+            requests: list[TranslationRequest] = []
+            replacements_by_request: list[dict[str, str]] = []
+            protected_terms: list[GlossaryTerm] = []
+            for paragraph in (part.strip() for part in chunk.source_text.split("\n\n")):
+                if not paragraph:
+                    continue
+                paragraph_chunk = Chunk(chunk.chapter_number, chunk.index, paragraph, chunk.paragraph_start, chunk.paragraph_end)
+                context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, paragraph_chunk, previous, glossary, entities, relevant_memory, relevant_context)
+                protected_text, replacements, paragraph_terms = self.protector.protect(paragraph, context.glossary_terms)
+                requests.append(TranslationRequest(protected_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, paragraph_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context))
+                replacements_by_request.append(replacements)
+                protected_terms.extend(paragraph_terms)
+            results = None
             for attempt in range(1, self.max_attempts + 1):
                 try:
-                    result = translator.translate(request)
+                    results = translator.translate_batch(requests)
                     break
                 except Exception:
                     if attempt == self.max_attempts:
                         raise
                     logger.warning("Translation attempt %d/%d failed for %s/%03d/%03d", attempt, self.max_attempts, novel_id, number, chunk.index)
-            assert result is not None
-            restored = self.protector.restore(result.translated_text, replacements)
-            clean = self.validator.validate(restored, replacements)
-            self.repository.save_translation_chunk(novel_id, number, translation_id, {"chapter_number": number, "chunk_index": chunk.index, "translation_id": translation_id, "source_hash": current_hash, "source_text": chunk.source_text, "translated_text": clean, "translator_id": result.translator_id, "model_id": result.model_id, "source_language": result.source_language, "target_language": result.target_language, "created_at": utc_now_iso(), "elapsed_seconds": result.elapsed_seconds, "metadata": result.metadata})
+            assert results is not None
+            if len(results) != len(requests):
+                raise ValueError(f"translator returned {len(results)} results for {len(requests)} paragraphs")
+            translated_paragraphs = [self.validator.validate(self.protector.restore(item.translated_text, replacements), replacements) for item, replacements in zip(results, replacements_by_request, strict=True)]
+            clean = "\n\n".join(translated_paragraphs)
+            result = results[0]
+            elapsed = sum(item.elapsed_seconds or 0.0 for item in results)
+            self.repository.save_translation_chunk(novel_id, number, translation_id, {"chapter_number": number, "chunk_index": chunk.index, "translation_id": translation_id, "source_hash": current_hash, "source_text": chunk.source_text, "translated_text": clean, "translator_id": result.translator_id, "model_id": result.model_id, "source_language": result.source_language, "target_language": result.target_language, "created_at": utc_now_iso(), "elapsed_seconds": elapsed, "metadata": result.metadata})
             if self.memory_enabled:
                 self._record_chunk_memory(memory, chunk, clean, result.source_language, result.target_language, number, translation_id, current_hash, protected_terms)
             translated += 1
@@ -191,7 +204,10 @@ class TranslationService:
         if not self.repository.translation_chunk_exists(novel_id, number, translation_id, chunk_index):
             return False
         data = self.repository.load_translation_chunk(novel_id, number, translation_id, chunk_index)
-        if data.get("source_hash") != source_hash or not bool(str(data.get("translated_text", "")).strip()) or not bool(data.get("translator_id")) or not bool(data.get("model_id")):
+        expected_chunk = next((item for item in self.repository.load_chunks(novel_id, number).get("chunks", []) if int(item.get("index", -1)) == int(chunk_index)), None)
+        if expected_chunk is None:
+            return False
+        if data.get("source_hash") != source_hash or data.get("source_text") != expected_chunk.get("source_text") or not bool(str(data.get("translated_text", "")).strip()) or not bool(data.get("translator_id")) or not bool(data.get("model_id")):
             return False
         return translator is None or (data.get("translator_id") == translator.id and data.get("model_id") == translator.model_id)
 

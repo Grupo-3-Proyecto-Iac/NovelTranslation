@@ -18,5 +18,9 @@ class Translator(ABC):
     def translate(self, request: TranslationRequest) -> TranslationResult:
         raise NotImplementedError
 
+    def translate_batch(self, requests: list[TranslationRequest]) -> list[TranslationResult]:
+        """Translate several requests while preserving their order."""
+        return [self.translate(request) for request in requests]
+
     def close(self) -> None:
         pass

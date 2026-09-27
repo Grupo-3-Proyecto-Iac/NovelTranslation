@@ -340,12 +340,12 @@ def _display_download_summary(summary) -> None:
 
 
 @app.command()
-def translate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), translator: str | None = typer.Option(None, "--translator"), force: bool = typer.Option(False, "--force")) -> None:
+def translate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), translator: str | None = typer.Option(None, "--translator"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0), force: bool = typer.Option(False, "--force")) -> None:
     registry, options = translation_registry()
     selected = translator or str(options.get("provider", "mock"))
     try:
         with RunProgress() as reporter:
-            summary = translation_service(registry, options, reporter).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
+            summary = translation_service(registry, options, reporter).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
     except NovelTranslatorError as error:
         typer.echo(f"Translation failed: {error}", err=True)
         raise typer.Exit(code=1) from error

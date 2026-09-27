@@ -40,9 +40,9 @@ download:
 
 processing:
   chunking:
-    max_characters: 6000
-    target_characters: 4500
-    overlap_paragraphs: 1
+    max_characters: 2200
+    target_characters: 1700
+    overlap_paragraphs: 0
 
 analysis:
   context:

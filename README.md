@@ -178,12 +178,13 @@ El backend `mock` sirve para pruebas y desarrollo local. `ollama` es opcional. T
 noveltranslator translator list
 noveltranslator translate NOVEL_ID --translator mock
 noveltranslator translate NOVEL_ID --translator huggingface --limit 1
+noveltranslator translate NOVEL_ID --translator huggingface --from-chapter 1 --to-chapter 1 --force
 noveltranslator translate NOVEL_ID --limit 1 --translation-id default
 noveltranslator translation show NOVEL_ID 1 1
 noveltranslator resume NOVEL_ID
 ```
 
-La traducción es idempotente por hash y checkpoint: los chunks válidos existentes se omiten y una interrupción deja progreso para `resume`. `--force` permite reprocesar explícitamente.
+La traducción conserva los límites de párrafo del original: los párrafos se traducen individualmente y se persisten separados por una línea en blanco. Es idempotente por hash y checkpoint: los chunks válidos existentes se omiten y una interrupción deja progreso para `resume`. `--force` permite reprocesar explícitamente; `--from-chapter` y `--to-chapter` permiten corregir un rango concreto sin reprocesar toda la novela.
 
 ## Translation Memory y Context Memory de Sprint 7
 

@@ -5,6 +5,7 @@ installation and CLI remain lightweight.
 """
 
 import time
+from contextlib import nullcontext
 
 from noveltranslator.core.exceptions import TranslationFailedError, TranslatorUnavailableError
 
@@ -47,10 +48,17 @@ class HuggingFaceTranslator(Translator):
         started = time.monotonic()
         self._load()
         try:
+            try:
+                import torch
+                inference_context = torch.inference_mode()
+            except ImportError:
+                inference_context = nullcontext()
+
             encoded = self._tokenizer(request.source_text, return_tensors="pt", truncation=True, max_length=self.max_input_tokens)
             if self.device != "cpu":
                 encoded = {key: value.to(self.device) for key, value in encoded.items()}
-            generated = self._model_instance.generate(**encoded, max_new_tokens=self.max_new_tokens, num_beams=4, early_stopping=True)
+            with inference_context:
+                generated = self._model_instance.generate(**encoded, max_new_tokens=self.max_new_tokens, num_beams=4, no_repeat_ngram_size=3, repetition_penalty=1.05, early_stopping=True)
             text = self._tokenizer.decode(generated[0], skip_special_tokens=True).strip()
             if not text:
                 raise TranslationFailedError("Hugging Face model returned an empty translation")
@@ -59,6 +67,52 @@ class HuggingFaceTranslator(Translator):
             raise
         except Exception as exc:
             raise TranslationFailedError(f"Hugging Face translation failed: {type(exc).__name__}") from exc
+
+    def translate_batch(self, requests: list[TranslationRequest]) -> list[TranslationResult]:
+        """Translate paragraph-sized requests in small batches."""
+        if not requests:
+            return []
+        started = time.monotonic()
+        self._load()
+        try:
+            try:
+                import torch
+                inference_context = torch.inference_mode()
+            except ImportError:
+                inference_context = nullcontext()
+
+            results: list[TranslationResult] = []
+            for offset in range(0, len(requests), 8):
+                batch = requests[offset:offset + 8]
+                encoded = self._tokenizer(
+                    [request.source_text for request in batch],
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_input_tokens,
+                )
+                if self.device != "cpu":
+                    encoded = {key: value.to(self.device) for key, value in encoded.items()}
+                with inference_context:
+                    generated = self._model_instance.generate(
+                        **encoded,
+                        max_new_tokens=self.max_new_tokens,
+                        num_beams=4,
+                        no_repeat_ngram_size=3,
+                        repetition_penalty=1.05,
+                        early_stopping=True,
+                    )
+                texts = self._tokenizer.batch_decode(generated, skip_special_tokens=True)
+                for request, text in zip(batch, texts, strict=True):
+                    clean = text.strip()
+                    if not clean:
+                        raise TranslationFailedError("Hugging Face model returned an empty translation")
+                    results.append(TranslationResult(clean, self.id, self.model_id, request.source_language, request.target_language, elapsed_seconds=time.monotonic() - started))
+            return results
+        except TranslationFailedError:
+            raise
+        except Exception as exc:
+            raise TranslationFailedError(f"Hugging Face batch translation failed: {type(exc).__name__}") from exc
 
     def close(self) -> None:
         self._tokenizer = None
