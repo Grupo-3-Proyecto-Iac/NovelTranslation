@@ -86,7 +86,7 @@ class TranslationService:
                 progress.mark_chapter_failed(number, error)
                 logger.error("Translation failed: %s/%03d", novel_id, number)
                 break
-        pending = sum(1 for number in chapters if self.repository.chunks_exist(novel_id, number) and not self._chapter_complete(novel_id, number, translation_id))
+        pending = sum(1 for number in chapters if self.repository.chunks_exist(novel_id, number) and not self._chapter_complete(novel_id, number, translation_id, translator))
         completed = pending == 0 and failed == 0 and not paused and any(self.repository.chunks_exist(novel_id, number) for number in chapters)
         if completed:
             progress.complete()
@@ -107,7 +107,7 @@ class TranslationService:
         previous: list[Chunk] = []
         self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.TRANSLATING.value})
         for chunk in chunks:
-            if self._translation_valid(novel_id, number, translation_id, chunk.index, current_hash) and not force:
+            if self._translation_valid(novel_id, number, translation_id, chunk.index, current_hash, translator) and not force:
                 if self.memory_enabled:
                     self._reconcile_chunk_memory(memory, novel_id, number, chunk, translation_id, current_hash)
                 skipped += 1
@@ -176,16 +176,18 @@ class TranslationService:
         for item in summary:
             memory.add_context_item(item, chapter_number, names, source_hash=source_hash, translation_id=translation_id)
 
-    def _translation_valid(self, novel_id, number, translation_id, chunk_index, source_hash) -> bool:
+    def _translation_valid(self, novel_id, number, translation_id, chunk_index, source_hash, translator=None) -> bool:
         if not self.repository.translation_chunk_exists(novel_id, number, translation_id, chunk_index):
             return False
         data = self.repository.load_translation_chunk(novel_id, number, translation_id, chunk_index)
-        return data.get("source_hash") == source_hash and bool(str(data.get("translated_text", "")).strip()) and bool(data.get("translator_id")) and bool(data.get("model_id"))
+        if data.get("source_hash") != source_hash or not bool(str(data.get("translated_text", "")).strip()) or not bool(data.get("translator_id")) or not bool(data.get("model_id")):
+            return False
+        return translator is None or (data.get("translator_id") == translator.id and data.get("model_id") == translator.model_id)
 
-    def _chapter_complete(self, novel_id, number, translation_id) -> bool:
+    def _chapter_complete(self, novel_id, number, translation_id, translator=None) -> bool:
         chunks = self.repository.load_chunks(novel_id, number).get("chunks", [])
         source_hash = self.repository.load_chunks(novel_id, number).get("source_hash")
-        return bool(chunks) and all(self._translation_valid(novel_id, number, translation_id, int(item["index"]), source_hash) for item in chunks)
+        return bool(chunks) and all(self._translation_valid(novel_id, number, translation_id, int(item["index"]), source_hash, translator) for item in chunks)
 
     @staticmethod
     def _entity(data: dict) -> Entity:
