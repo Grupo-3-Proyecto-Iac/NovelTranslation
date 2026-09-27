@@ -20,6 +20,8 @@ from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_
 from noveltranslator.sources.loader import default_registry
 from noveltranslator.storage.repository import NovelRepository
 from noveltranslator.translators import MockTranslator, OllamaTranslator, TranslatorRegistry
+from noveltranslator.validation.chunk_validator import ChunkValidator
+from noveltranslator.application.validation_service import ValidationService
 
 app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web.")
 source_app = typer.Typer(help="Gestiona las fuentes registradas.")
@@ -34,10 +36,12 @@ translator_app = typer.Typer(help="Gestiona los traductores disponibles.")
 translation_app = typer.Typer(help="Consulta traducciones persistidas.")
 memory_app = typer.Typer(help="Gestiona la memoria de traducción.")
 context_app = typer.Typer(help="Consulta el contexto narrativo persistido.")
+validation_app = typer.Typer(help="Consulta resultados de validación.")
 app.add_typer(translator_app, name="translator")
 app.add_typer(translation_app, name="translation")
 app.add_typer(memory_app, name="memory")
 app.add_typer(context_app, name="context")
+app.add_typer(validation_app, name="validation")
 
 
 def repository() -> NovelRepository:
@@ -79,7 +83,9 @@ def translation_registry() -> tuple[TranslatorRegistry, dict]:
     if not config_path.is_file():
         config_path = CONFIG_ROOT / "config.example.yaml"
     values = load_yaml(config_path)
-    options = values.get("translation", {})
+    options = dict(values.get("translation", {}))
+    options["memory"] = values.get("memory", {})
+    options["validation"] = values.get("validation", {})
     registry = TranslatorRegistry()
     registry.register(MockTranslator())
     registry.register(OllamaTranslator(model=str(options.get("model", "qwen2.5:7b"))))
@@ -97,6 +103,10 @@ def memory_manager(novel_id: str) -> MemoryManager:
 
 def translation_service(registry: TranslatorRegistry, options: dict) -> TranslationService:
     memory = options.get("memory", {})
+    validation = options.get("validation", {})
+    ratio = validation.get("length_ratio", {})
+    untranslated = validation.get("untranslated_detection", {})
+    chunk_validator = ChunkValidator(min_length_ratio=float(ratio.get("min", 0.35)), max_length_ratio=float(ratio.get("max", 2.50)), untranslated_threshold=float(untranslated.get("warning_threshold", 0.30)), untranslated_enabled=bool(untranslated.get("enabled", True)), locked_missing_is_failure=bool(validation.get("locked_terms", {}).get("missing_is_failure", True)))
     return TranslationService(
         repository(),
         registry,
@@ -105,7 +115,21 @@ def translation_service(registry: TranslatorRegistry, options: dict) -> Translat
         max_translation_entries=int(memory.get("translation", {}).get("max_entries_per_request", 20)),
         max_context_items=int(memory.get("context", {}).get("max_items", 20)),
         previous_chapters=int(memory.get("context", {}).get("previous_chapters", 2)),
+        auto_validate=bool(validation.get("auto_validate_after_translation", False)),
+        validation_service=ValidationService(repository(), chunk_validator=chunk_validator),
     )
+
+
+def validation_service_from_config() -> ValidationService:
+    config_path = CONFIG_ROOT / "config.yaml"
+    if not config_path.is_file():
+        config_path = CONFIG_ROOT / "config.example.yaml"
+    values = load_yaml(config_path)
+    options = values.get("validation", {})
+    ratio = options.get("length_ratio", {})
+    untranslated = options.get("untranslated_detection", {})
+    validator = ChunkValidator(min_length_ratio=float(ratio.get("min", 0.35)), max_length_ratio=float(ratio.get("max", 2.50)), untranslated_threshold=float(untranslated.get("warning_threshold", 0.30)), untranslated_enabled=bool(untranslated.get("enabled", True)), locked_missing_is_failure=bool(options.get("locked_terms", {}).get("missing_is_failure", True)))
+    return ValidationService(repository(), chunk_validator=validator)
 
 
 @source_app.command("list")
@@ -256,6 +280,52 @@ def translation_show(novel_id: str = typer.Argument(...), chapter: int = typer.A
     typer.echo(data.get("translated_text", ""))
 
 
+@app.command()
+def validate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=1), to_chapter: int | None = typer.Option(None, "--to-chapter", min=1)) -> None:
+    summary = validation_service_from_config().validate_novel(novel_id, translation_id=translation_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter)
+    _display_validation_summary(summary)
+
+
+def _display_validation_summary(summary) -> None:
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"Chapters: {summary.chapters_total}")
+    typer.echo(f"OK: {summary.ok}")
+    typer.echo(f"Warnings: {summary.warnings}")
+    typer.echo(f"Failed: {summary.failed}")
+    typer.echo(f"Needs review: {summary.needs_review}")
+
+
+@validation_app.command("show")
+def validation_show(novel_id: str = typer.Argument(...), chapter: int = typer.Argument(..., min=1), translation_id: str = typer.Option("default", "--translation-id")) -> None:
+    data = repository().load_validation_result(novel_id, chapter, translation_id)
+    typer.echo(f"Status: {data.get('status', 'UNKNOWN')}")
+    typer.echo(f"Needs review: {data.get('needs_review', False)}")
+    typer.echo("Errors:")
+    for issue in data.get("errors", []):
+        typer.echo(f"- {issue.get('code')}: {issue.get('message')}")
+    typer.echo("Warnings:")
+    for issue in data.get("warnings", []):
+        typer.echo(f"- {issue.get('code')}: {issue.get('message')}")
+
+
+@validation_app.command("list")
+def validation_list(novel_id: str = typer.Argument(...), translation_id: str = typer.Option("default", "--translation-id"), status_filter: str | None = typer.Option(None, "--status")) -> None:
+    for result in repository().list_validation_results(novel_id, translation_id):
+        if status_filter and result.get("status", "").casefold() != status_filter.casefold():
+            continue
+        typer.echo(f"Chapter {int(result.get('chapter_number', 0)):03d}: {result.get('status', 'UNKNOWN')}" + (" [needs review]" if result.get("needs_review") else ""))
+
+
+@validation_app.command("report")
+def validation_report(novel_id: str = typer.Argument(...), translation_id: str = typer.Option("default", "--translation-id")) -> None:
+    summary = validation_service_from_config().validate_novel(novel_id, translation_id=translation_id, reuse_existing=True)
+    _display_validation_summary(summary)
+    if summary.issues_by_code:
+        typer.echo("Top issues:")
+        for code, count in sorted(summary.issues_by_code.items(), key=lambda item: (-item[1], item[0])):
+            typer.echo(f"{code}: {count}")
+
+
 @memory_app.command("list")
 def memory_list(novel_id: str = typer.Argument(...), status: str | None = typer.Option(None, "--status")) -> None:
     entries = memory_manager(novel_id).load_translation_memory()
@@ -313,6 +383,11 @@ def resume(novel_id: str | None = typer.Argument(None, help="Identificador local
     if pending and pending.stage and pending.stage.value == "ANALYZING":
         summary = analysis_service().analyze_novel(novel_id, limit=limit)
         typer.echo(f"Analysis resumed: {summary.analyzed_now} analyzed, {summary.pending} pending")
+        return
+    if pending and pending.stage and pending.stage.value == "VALIDATING":
+        progress = repository().load_progress(novel_id)
+        summary = validation_service_from_config().validate_novel(novel_id, translation_id=progress.get("translation_id") or "default", limit=limit, reuse_existing=True)
+        typer.echo(f"Validation resumed: {summary.ok} OK, {summary.warnings} warnings, {summary.failed} failed")
         return
     if pending and pending.stage and pending.stage.value == "TRANSLATING":
         progress = repository().load_progress(novel_id)
@@ -389,6 +464,11 @@ def status(novel_id: str = typer.Argument(..., help="Identificador de novela")) 
     translation_id = progress.get("translation_id", "default") if progress else "default"
     translated_chunks = sum(len(repo.list_translation_chunks(novel_id, number, translation_id)) for number in chapter_numbers)
     typer.echo(f"Translated chunks: {translated_chunks}")
+    validation_results = repo.list_validation_results(novel_id, translation_id)
+    typer.echo(f"Validated OK: {sum(result.get('status') == 'OK' for result in validation_results)}")
+    typer.echo(f"Warnings: {sum(result.get('status') == 'WARNING' for result in validation_results)}")
+    typer.echo(f"Failed validation: {sum(result.get('status') == 'FAILED' for result in validation_results)}")
+    typer.echo(f"Needs review: {sum(bool(result.get('needs_review')) for result in validation_results)}")
     if progress is None:
         typer.echo("Progress: not started")
         return

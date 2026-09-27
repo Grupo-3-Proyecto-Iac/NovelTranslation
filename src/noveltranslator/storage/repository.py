@@ -152,6 +152,25 @@ class NovelRepository:
     def chapter_context_exists(self, novel_id: str, number: int) -> bool:
         return self._chapter_context_path(novel_id, number).is_file()
 
+    def _validation_path(self, novel_id: str, number: int, translation_id: str) -> Path:
+        return self._chapter_dir(novel_id, number) / "validation" / f"{slugify(translation_id, 40)}.json"
+
+    def save_validation_result(self, novel_id: str, number: int, translation_id: str, payload: dict[str, Any]) -> None:
+        write_json_atomic(self._validation_path(novel_id, number, translation_id), payload)
+
+    def load_validation_result(self, novel_id: str, number: int, translation_id: str) -> dict[str, Any]:
+        return read_json(self._validation_path(novel_id, number, translation_id))
+
+    def validation_exists(self, novel_id: str, number: int, translation_id: str) -> bool:
+        return self._validation_path(novel_id, number, translation_id).is_file()
+
+    def list_validation_results(self, novel_id: str, translation_id: str = "default") -> list[dict[str, Any]]:
+        results = []
+        for number in self.list_chapters(novel_id):
+            if self.validation_exists(novel_id, number, translation_id):
+                results.append(self.load_validation_result(novel_id, number, translation_id))
+        return results
+
     def list_chapter_contexts(self, novel_id: str) -> list[dict[str, Any]]:
         contexts = []
         for number in self.list_chapters(novel_id):

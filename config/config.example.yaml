@@ -71,3 +71,15 @@ memory:
     max_items: 20
   conflict_policy: warn
 
+validation:
+  enabled: true
+  auto_validate_after_translation: true
+  length_ratio:
+    min: 0.35
+    max: 2.50
+  untranslated_detection:
+    enabled: true
+    warning_threshold: 0.30
+  locked_terms:
+    missing_is_failure: true
+

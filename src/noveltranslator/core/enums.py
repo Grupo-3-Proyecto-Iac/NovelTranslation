@@ -33,6 +33,12 @@ class ProcessingState(StrEnum):
     PAUSED = "PAUSED"
 
 
+class ValidationStatus(StrEnum):
+    OK = "OK"
+    WARNING = "WARNING"
+    FAILED = "FAILED"
+
+
 class NovelStatus(StrEnum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"

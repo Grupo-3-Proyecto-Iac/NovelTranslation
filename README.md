@@ -184,6 +184,21 @@ noveltranslator context show NOVEL_ID --chapter 1
 
 La reconciliación vuelve a registrar memoria a partir de un chunk traducido válido si el proceso se interrumpió después de guardar la traducción y antes de actualizar la memoria.
 
+## Validation de Sprint 8
+
+La validación lee los chunks traducidos, evalúa su integridad y persiste el resultado en `chapters/NNN/validation/<translation-id>.json`. No modifica ni reescribe traducciones.
+
+Se distinguen tres estados: `OK`, `WARNING` y `FAILED`. Se comprueban traducciones vacías, placeholders, términos locked/preserve, hash del original, metadata, chunks faltantes, ratios de longitud, Unicode inválido y posibles fragmentos de inglés sin traducir. Estas heurísticas detectan anomalías, pero no sustituyen una revisión humana de calidad literaria.
+
+Los warnings marcan `needs_review` y permiten continuar; los fallos conservan la traducción para revisión, pero impiden considerar válido el capítulo. La configuración se encuentra en `config/config.yaml` o `config.example.yaml`.
+
+```bash
+noveltranslator validate NOVEL_ID --translation-id default
+noveltranslator validation show NOVEL_ID 1
+noveltranslator validation list NOVEL_ID --status warning
+noveltranslator validation report NOVEL_ID
+```
+
 ## Roadmap
 
 1. Sprint 0: arquitectura, modelos, interfaces, JSON y CLI base.

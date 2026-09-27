@@ -14,6 +14,8 @@ from noveltranslator.storage.serialization import utc_now_iso
 from noveltranslator.translators.models import TranslationRequest
 from noveltranslator.translators.protection import ProtectedTermProtector
 from noveltranslator.translators.registry import TranslatorRegistry
+from noveltranslator.validation.chunk_validator import ChunkValidator
+from noveltranslator.application.validation_service import ValidationService
 
 logger = logging.getLogger("noveltranslator.application.translation")
 
@@ -32,7 +34,7 @@ class TranslationSummary:
 
 
 class TranslationService:
-    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1, memory_enabled: bool = True, max_translation_entries: int = 20, max_context_items: int = 20, previous_chapters: int = 2) -> None:
+    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1, memory_enabled: bool = True, max_translation_entries: int = 20, max_context_items: int = 20, previous_chapters: int = 2, auto_validate: bool = False, validation_service: ValidationService | None = None) -> None:
         self.repository = repository
         self.registry = registry
         self.context_builder = context_builder or ContextBuilder()
@@ -44,6 +46,8 @@ class TranslationService:
         self.max_translation_entries = max(0, int(max_translation_entries))
         self.max_context_items = max(0, int(max_context_items))
         self.previous_chapters = max(0, int(previous_chapters))
+        self.auto_validate = auto_validate
+        self.validation_service = validation_service or ValidationService(repository)
 
     def translate_novel(self, novel_id: str, *, translation_id: str = "default", translator_id: str = "mock", source_language: str | None = None, target_language: str = "es", limit: int | None = None, from_chapter: int | None = None, to_chapter: int | None = None, force: bool = False) -> TranslationSummary:
         if limit is not None and limit < 1:
@@ -132,7 +136,7 @@ class TranslationService:
             assert result is not None
             restored = self.protector.restore(result.translated_text, replacements)
             clean = self.validator.validate(restored, replacements)
-            self.repository.save_translation_chunk(novel_id, number, translation_id, {"chapter_number": number, "chunk_index": chunk.index, "source_hash": current_hash, "source_text": chunk.source_text, "translated_text": clean, "translator_id": result.translator_id, "model_id": result.model_id, "source_language": result.source_language, "target_language": result.target_language, "created_at": utc_now_iso(), "elapsed_seconds": result.elapsed_seconds, "metadata": result.metadata})
+            self.repository.save_translation_chunk(novel_id, number, translation_id, {"chapter_number": number, "chunk_index": chunk.index, "translation_id": translation_id, "source_hash": current_hash, "source_text": chunk.source_text, "translated_text": clean, "translator_id": result.translator_id, "model_id": result.model_id, "source_language": result.source_language, "target_language": result.target_language, "created_at": utc_now_iso(), "elapsed_seconds": result.elapsed_seconds, "metadata": result.metadata})
             if self.memory_enabled:
                 self._record_chunk_memory(memory, chunk, clean, result.source_language, result.target_language, number, translation_id, current_hash, protected_terms)
             translated += 1
@@ -140,7 +144,13 @@ class TranslationService:
         self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.TRANSLATED.value})
         if self.memory_enabled:
             self._save_chapter_context(memory, novel_id, number, translation_id, current_hash, entities, glossary)
-        progress.mark_translation_completed(number)
+        if self.auto_validate:
+            self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.VALIDATING.value})
+            result = self.validation_service.validate_chapter(novel_id, number, translation_id, progress=progress)
+            if result.status.value == "FAILED":
+                raise ValueError("chapter validation failed")
+        else:
+            progress.mark_translation_completed(number)
         return translated, skipped
 
     def _record_chunk_memory(self, memory, chunk, translated_text, source_language, target_language, chapter_number, translation_id, source_hash, protected_terms):
