@@ -9,6 +9,7 @@ from noveltranslator.core.models import Chapter, Novel, NovelProgress
 from noveltranslator.storage.identifiers import chapter_directory_name, slugify
 from noveltranslator.storage.progress_manager import ProgressManager
 from noveltranslator.storage.repository import NovelRepository
+from noveltranslator.storage import serialization
 from noveltranslator.storage.serialization import write_json_atomic
 
 
@@ -95,6 +96,25 @@ def test_atomic_write_leaves_final_json_and_no_temp_file(tmp_path):
     write_json_atomic(target, {"text": "ñ"})
     assert json.loads(target.read_text(encoding="utf-8")) == {"text": "ñ"}
     assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_atomic_write_retries_temporary_file_lock(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "locked.json"
+    original_replace = serialization.os.replace
+    attempts = 0
+
+    def flaky_replace(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("temporary sharing violation")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(serialization.os, "replace", flaky_replace)
+    write_json_atomic(target, {"ok": True})
+
+    assert attempts == 3
+    assert serialization.read_json(target) == {"ok": True}
 
 
 def test_identifiers_are_safe_and_padded():

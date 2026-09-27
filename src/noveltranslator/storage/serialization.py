@@ -1,6 +1,7 @@
 """Central JSON serialization helpers used by every storage component."""
 
 import json
+import time
 import os
 import tempfile
 import logging
@@ -13,6 +14,9 @@ from typing import Any
 from noveltranslator.core.exceptions import CorruptedDataError, StorageError
 
 logger = logging.getLogger("noveltranslator.storage")
+
+_ATOMIC_REPLACE_ATTEMPTS = 4
+_ATOMIC_REPLACE_DELAYS = (0.05, 0.10, 0.20)
 
 
 def utc_now_iso() -> str:
@@ -44,13 +48,36 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
             json.dump(to_json_value(data), handle, ensure_ascii=False, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, destination)
+        replace_error: OSError | None = None
+        for attempt in range(1, _ATOMIC_REPLACE_ATTEMPTS + 1):
+            try:
+                os.replace(temporary_path, destination)
+                replace_error = None
+                break
+            except PermissionError as exc:
+                replace_error = exc
+                if attempt == _ATOMIC_REPLACE_ATTEMPTS:
+                    raise
+                delay = _ATOMIC_REPLACE_DELAYS[attempt - 1]
+                logger.warning(
+                    "Atomic JSON replace temporarily blocked; retrying in %.2fs (%d/%d): %s",
+                    delay, attempt, _ATOMIC_REPLACE_ATTEMPTS, destination,
+                )
+                time.sleep(delay)
+        if replace_error is not None:
+            raise replace_error
         logger.debug("JSON atomically written: %s", destination)
     except OSError as exc:
-        raise StorageError(f"Could not atomically write JSON: {destination}") from exc
+        raise StorageError(
+            f"Could not atomically write JSON: {destination} "
+            f"({type(exc).__name__}: {exc})"
+        ) from exc
     finally:
         if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink(missing_ok=True)
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove temporary JSON file: %s", temporary_path)
 
 
 def read_json(path: str | Path) -> Any:
