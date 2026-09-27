@@ -11,7 +11,16 @@ from noveltranslator.storage.repository import NovelRepository
 
 def test_normalizer_preserves_paragraphs_unicode_and_dialogue():
     paragraphs = TextNormalizer().normalize(["  Hello   world.  ", "", '  "¿Dónde estás?"  ', "한글 日本語"])
-    assert paragraphs == ["Hello world.", '"¿Dónde estás?"', "한글 日本語"]
+    assert paragraphs == ["Hello   world.", '"¿Dónde estás?"', "한글 日本語"]
+
+
+def test_formatting_protector_restores_symbols_and_internal_spacing():
+    from noveltranslator.translators.protection import FormattingProtector
+
+    original = "*Hm-hm...  — hello - world*"
+    protected, replacements = FormattingProtector().protect(original)
+    assert original not in protected
+    assert FormattingProtector.restore(protected, replacements) == original
 
 
 def test_source_hash_is_stable_and_changes_with_content():
@@ -41,6 +50,13 @@ def test_entity_extractor_is_deterministic_and_conservative():
     assert any(entity.text == "Shadow Sovereign" for entity in entities)
     assert all(entity.status is EntityStatus.CANDIDATE for entity in entities)
     assert all(entity.translation is None for entity in entities)
+
+
+def test_entity_extractor_captures_expression_candidates():
+    entities = EntityExtractor().extract(["Hm-hm... The door opened.", "UGH!"])
+    expressions = {entity.text: entity.type for entity in entities}
+    assert expressions["Hm-hm"] is EntityType.EXPRESSION
+    assert expressions["UGH"] is EntityType.EXPRESSION
 
 
 def make_analysis_repository(tmp_path):

@@ -13,7 +13,7 @@ from noveltranslator.storage.progress_manager import ProgressManager
 from noveltranslator.storage.repository import NovelRepository
 from noveltranslator.storage.serialization import utc_now_iso
 from noveltranslator.translators.models import TranslationRequest
-from noveltranslator.translators.protection import ProtectedTermProtector
+from noveltranslator.translators.protection import FormattingProtector, ProtectedTermProtector
 from noveltranslator.translators.registry import TranslatorRegistry
 from noveltranslator.validation.chunk_validator import ChunkValidator
 from noveltranslator.application.validation_service import ValidationService
@@ -41,6 +41,7 @@ class TranslationService:
         self.context_builder = context_builder or ContextBuilder()
         self.validator = validator or TranslationValidator()
         self.protector = protector or ProtectedTermProtector()
+        self.formatter = FormattingProtector()
         self.normalizer = TextNormalizer()
         self.max_attempts = max(1, int(max_attempts))
         self.memory_enabled = memory_enabled
@@ -140,8 +141,9 @@ class TranslationService:
                 paragraph_chunk = Chunk(chunk.chapter_number, chunk.index, paragraph, chunk.paragraph_start, chunk.paragraph_end)
                 context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, paragraph_chunk, previous, glossary, entities, relevant_memory, relevant_context)
                 protected_text, replacements, paragraph_terms = self.protector.protect(paragraph, context.glossary_terms)
-                requests.append(TranslationRequest(protected_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, paragraph_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context))
-                replacements_by_request.append(replacements)
+                formatted_text, format_replacements = self.formatter.protect(protected_text)
+                requests.append(TranslationRequest(formatted_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, paragraph_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context))
+                replacements_by_request.append(replacements | format_replacements)
                 protected_terms.extend(paragraph_terms)
             results = None
             for attempt in range(1, self.max_attempts + 1):
@@ -155,7 +157,7 @@ class TranslationService:
             assert results is not None
             if len(results) != len(requests):
                 raise ValueError(f"translator returned {len(results)} results for {len(requests)} paragraphs")
-            translated_paragraphs = [self.validator.validate(self.protector.restore(item.translated_text, replacements), replacements) for item, replacements in zip(results, replacements_by_request, strict=True)]
+            translated_paragraphs = [self.validator.validate(self.formatter.restore(self.protector.restore(item.translated_text, replacements), replacements), replacements) for item, replacements in zip(results, replacements_by_request, strict=True)]
             clean = "\n\n".join(translated_paragraphs)
             result = results[0]
             elapsed = sum(item.elapsed_seconds or 0.0 for item in results)

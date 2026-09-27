@@ -49,6 +49,28 @@ def test_translation_persists_and_is_idempotent(tmp_path: Path) -> None:
     assert translator.calls == 2
 
 
+def test_translation_preserves_formatting_atoms(tmp_path: Path) -> None:
+    repo, novel_id = prepared_repository(tmp_path)
+    paragraphs = ["*Hm-hm...  \u2014 hello - world*"]
+    repo.save_source(novel_id, 1, "en", paragraphs)
+    normalizer = TextNormalizer()
+    chunks = TextSplitter(overlap_paragraphs=0).split(paragraphs, 1)
+    repo.save_chunks(novel_id, 1, normalizer.source_hash(normalizer.normalize(paragraphs)), chunks)
+    repo.save_analysis(novel_id, 1, {"entities": []})
+    registry = TranslatorRegistry()
+    registry.register(MockTranslator())
+
+    TranslationService(repo, registry).translate_novel(novel_id)
+    translated = repo.load_translation_chunk(novel_id, 1, "default", 1)["translated_text"]
+
+    assert "*" in translated
+    assert "Hm-hm" in translated
+    assert "..." in translated
+    assert "  " in translated
+    assert "\u2014" in translated
+    assert " - " in translated
+
+
 def test_protection_handles_nested_terms_and_collisions() -> None:
     protector = ProtectedTermProtector()
     terms = [

@@ -35,11 +35,41 @@ class ProtectedTermProtector:
         return restored
 
 
+class FormattingProtector:
+    """Protect formatting atoms that a translation model may normalize away."""
+
+    _pattern = re.compile(
+        r"[ \t]{2,}|\n+|\.{3,}|…+|\*+|[!?]{2,}|"
+        r"\b[\w]+(?:[-–—][\w]+)+\b|(?<!\w)[-–—]{1,3}(?!\w)"
+    )
+
+    def protect(self, text: str) -> tuple[str, dict[str, str]]:
+        replacements: dict[str, str] = {}
+
+        def replace(match: re.Match[str]) -> str:
+            value = match.group(0)
+            digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8].upper()
+            token = f"__NT_FMT_{len(replacements):04d}_{digest}__"
+            while token in replacements or token in text:
+                token = f"{token}_X"
+            replacements[token] = value
+            return token
+
+        return self._pattern.sub(replace, text), replacements
+
+    @staticmethod
+    def restore(text: str, replacements: dict[str, str]) -> str:
+        restored = text
+        for token, value in replacements.items():
+            restored = restored.replace(token, value)
+        return restored
+
+
 class TranslationValidator:
     def validate(self, translated_text: str, replacements: dict[str, str]) -> str:
         if not isinstance(translated_text, str) or not translated_text.strip():
             raise ValueError("translation is empty")
-        if re.search(r"__NT_TERM_[A-Z0-9_]+__", translated_text):
+        if re.search(r"__NT_(?:TERM|FMT)_[A-Z0-9_]+__", translated_text):
             raise ValueError("translation contains an unreplaced protected-term placeholder")
         for replacement in replacements.values():
             if replacement not in translated_text:

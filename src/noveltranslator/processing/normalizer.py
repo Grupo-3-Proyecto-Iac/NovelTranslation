@@ -11,7 +11,7 @@ class TextNormalizer:
         for paragraph in paragraphs:
             if not isinstance(paragraph, str):
                 continue
-            cleaned = re.sub(r"\s+", " ", paragraph).strip()
+            cleaned = paragraph.replace("\r\n", "\n").replace("\r", "\n").strip()
             if cleaned:
                 result.append(cleaned)
         return result

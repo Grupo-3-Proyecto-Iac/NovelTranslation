@@ -9,6 +9,7 @@ class EntityType(StrEnum):
     ORGANIZATION = "ORGANIZATION"
     TITLE = "TITLE"
     SPECIES = "SPECIES"
+    EXPRESSION = "EXPRESSION"
     OTHER = "OTHER"
 
 
