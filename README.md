@@ -152,11 +152,12 @@ El motor de traducción procesa capítulos que ya tienen `source.json` y `proces
 
 `TranslationService` construye contexto con chunks anteriores, glosario y entidades. Los términos bloqueados o marcados para preservar se protegen con placeholders resistentes a colisiones, se restauran y se validan antes de persistir. Si cambia el hash del original, el resultado deja de ser válido y se reprocesa.
 
-El backend `mock` sirve para pruebas y desarrollo local. `ollama` es un adaptador opcional que llama a un servidor Ollama local ya instalado; NovelTranslator no instala Ollama ni descarga modelos.
+El backend `mock` sirve para pruebas y desarrollo local. `ollama` es opcional. También existe el backend opcional `huggingface`, cuyo modelo predeterminado es `Helsinki-NLP/opus-mt-en-es`; sus dependencias se instalan por separado con `pip install -e ".[huggingface]"` y el modelo se descarga únicamente al ejecutar una traducción real.
 
 ```bash
 noveltranslator translator list
 noveltranslator translate NOVEL_ID --translator mock
+noveltranslator translate NOVEL_ID --translator huggingface --limit 1
 noveltranslator translate NOVEL_ID --limit 1 --translation-id default
 noveltranslator translation show NOVEL_ID 1 1
 noveltranslator resume NOVEL_ID

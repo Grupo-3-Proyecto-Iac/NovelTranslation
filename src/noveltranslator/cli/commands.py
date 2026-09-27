@@ -21,7 +21,7 @@ from noveltranslator.infrastructure.config import load_yaml
 from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
 from noveltranslator.sources.loader import default_registry
 from noveltranslator.storage.repository import NovelRepository
-from noveltranslator.translators import MockTranslator, OllamaTranslator, TranslatorRegistry
+from noveltranslator.translators import HuggingFaceTranslator, MockTranslator, OllamaTranslator, TranslatorRegistry
 from noveltranslator.validation.chunk_validator import ChunkValidator
 from noveltranslator.application.validation_service import ValidationService
 
@@ -91,6 +91,7 @@ def translation_registry() -> tuple[TranslatorRegistry, dict]:
     registry = TranslatorRegistry()
     registry.register(MockTranslator())
     registry.register(OllamaTranslator(model=str(options.get("model", "qwen2.5:7b"))))
+    registry.register(HuggingFaceTranslator(model=str(options.get("huggingface_model", "Helsinki-NLP/opus-mt-en-es")), device=str(options.get("huggingface_device", "cpu"))))
     return registry, options
 
 
