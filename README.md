@@ -199,6 +199,33 @@ noveltranslator validation list NOVEL_ID --status warning
 noveltranslator validation report NOVEL_ID
 ```
 
+## Exportación de Sprint 9
+
+La exportación es completamente offline y nunca modifica `source.json`, `analysis.json` ni los chunks de traducción. `ChapterAssembler` reconstruye cada capítulo ordenando los chunks por `chunk_index` y solo usa el `translation_id` solicitado.
+
+Por defecto se exportan únicamente capítulos con traducción completa y validación `OK`. Los capítulos con warnings requieren `--include-warnings`; los capítulos `FAILED`, sin validación o con chunks faltantes se omiten. Los archivos se guardan en `data/novels/<novel-id>/exports/` con nombres seguros para Windows. No se sobrescriben sin `--overwrite`.
+
+Formatos disponibles:
+
+```bash
+noveltranslator export NOVEL_ID --format txt --translation-id default
+noveltranslator export NOVEL_ID --format json --translation-id default
+noveltranslator export NOVEL_ID --format html --translation-id default
+noveltranslator export NOVEL_ID --format epub --translation-id default
+```
+
+TXT, JSON y HTML conservan Unicode; HTML escapa el contenido como texto. EPUB se genera con la biblioteca estándar, incluye metadata, tabla de contenidos, CSS, capítulos XHTML y portada únicamente si existe localmente. No se realizan requests para obtener portadas remotas durante la exportación.
+
+Flujo típico del MVP:
+
+```bash
+noveltranslator download URL
+noveltranslator analyze NOVEL_ID
+noveltranslator translate NOVEL_ID
+noveltranslator validate NOVEL_ID
+noveltranslator export NOVEL_ID --format epub
+```
+
 ## Roadmap
 
 1. Sprint 0: arquitectura, modelos, interfaces, JSON y CLI base.

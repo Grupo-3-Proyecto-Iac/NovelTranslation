@@ -9,7 +9,9 @@ from noveltranslator.application.resume_service import ResumeService
 from noveltranslator.application.download_service import DownloadService
 from noveltranslator.application.analysis_service import AnalysisService
 from noveltranslator.application.translation_service import TranslationService
+from noveltranslator.application.export_service import ExportService
 from noveltranslator.core.models import Chapter, TranslationMemoryEntry
+from noveltranslator.core.exceptions import ExportError
 from noveltranslator.core.models import GlossaryTerm
 from noveltranslator.core.enums import GlossaryStatus
 from noveltranslator.processing.glossary import GlossaryManager
@@ -186,8 +188,18 @@ def analyze(novel_id: str = typer.Argument(..., help="Identificador local de nov
 
 @novel_app.command("list")
 def novel_list() -> None:
-    novels = repository().list_novels()
-    typer.echo("\n".join(novels) if novels else "No novels found.")
+    repo = repository()
+    novels = repo.list_novels()
+    if not novels:
+        typer.echo("No novels found.")
+        return
+    typer.echo("ID\tChapters\tTranslated\tStatus")
+    for novel_id in novels:
+        progress = repo.load_progress(novel_id) if repo.progress_exists(novel_id) else {}
+        translation_id = progress.get("translation_id", "default")
+        chapters = repo.list_chapters(novel_id)
+        translated = sum(bool(repo.list_translation_chunks(novel_id, number, translation_id)) for number in chapters)
+        typer.echo(f"{novel_id}\t{len(chapters)}\t{translated}\t{progress.get('overall_status', 'PENDING')}")
 
 
 @app.command()
@@ -469,6 +481,9 @@ def status(novel_id: str = typer.Argument(..., help="Identificador de novela")) 
     typer.echo(f"Warnings: {sum(result.get('status') == 'WARNING' for result in validation_results)}")
     typer.echo(f"Failed validation: {sum(result.get('status') == 'FAILED' for result in validation_results)}")
     typer.echo(f"Needs review: {sum(bool(result.get('needs_review')) for result in validation_results)}")
+    export_dir = repo.root / novel_id / "exports"
+    for export_format in ("epub", "txt", "json", "html"):
+        typer.echo(f"Export {export_format.upper()}: {'yes' if any(export_dir.glob(f'*.{export_format}')) else 'no'}")
     if progress is None:
         typer.echo("Progress: not started")
         return
@@ -480,5 +495,16 @@ def status(novel_id: str = typer.Argument(..., help="Identificador de novela")) 
 
 
 @app.command()
-def export(novel_id: str = typer.Argument(...), format: str = typer.Option("txt", "--format")) -> None:
-    typer.echo(f"Exportación aún no implementada: {novel_id} ({format})")
+def export(novel_id: str = typer.Argument(...), format: str = typer.Option("txt", "--format", help="Formato: txt, json, html o epub"), translation_id: str = typer.Option("default", "--translation-id"), include_warnings: bool = typer.Option(False, "--include-warnings"), overwrite: bool = typer.Option(False, "--overwrite"), allow_partial: bool = typer.Option(False, "--allow-partial"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=1), to_chapter: int | None = typer.Option(None, "--to-chapter", min=1)) -> None:
+    try:
+        result = ExportService(repository()).export_novel(novel_id, format_id=format, translation_id=translation_id, include_warnings=include_warnings, overwrite=overwrite, allow_partial=allow_partial, from_chapter=from_chapter, to_chapter=to_chapter)
+    except (ExportError, KeyError, ValueError, OSError) as error:
+        typer.echo(f"Export failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Format: {result.format}")
+    typer.echo(f"Output: {result.output_path}")
+    typer.echo(f"Chapters exported: {result.chapters_exported}")
+    typer.echo(f"Chapters skipped: {result.chapters_skipped}")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}")
+    return

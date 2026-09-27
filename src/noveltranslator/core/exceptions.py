@@ -61,3 +61,7 @@ class TranslationFailedError(TranslationError):
 class InvalidTranslationError(TranslationError):
     pass
 
+
+class ExportError(Exception):
+    """Raised when an export cannot be assembled safely."""
+
