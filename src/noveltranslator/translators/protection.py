@@ -36,18 +36,44 @@ class ProtectedTermProtector:
 
 
 class FormattingProtector:
-    """Protect formatting atoms that a translation model may normalize away."""
+    """Identifies formatting atoms that a translation model may normalize away."""
 
     _pattern = re.compile(
         r"[ \t]{2,}|\n+|\.{3,}|…+|\*+|[!?]{2,}|"
         r"\b[\w]+(?:[-–—][\w]+)+\b|(?<!\w)[-–—]{1,3}(?!\w)"
     )
+    _hyphenated_pattern = re.compile(r"^\w+(?:[-–—]\w+)+$", re.UNICODE)
+    _interjection_roots = {"ah", "ahem", "bang", "blah", "ha", "he", "hm", "hmm", "ho", "mm", "oof", "oh", "phew", "tch", "tsk", "tut", "ugh", "uh"}
+
+    @classmethod
+    def _is_format_atom(cls, value: str) -> bool:
+        if not cls._hyphenated_pattern.fullmatch(value):
+            return True
+        parts = re.split(r"[-–—]", value.casefold())
+        return any(part in cls._interjection_roots for part in parts) or len(set(parts)) == 1 or all(len(part) <= 3 for part in parts)
+
+    def split(self, text: str) -> list[tuple[bool, str]]:
+        """Split text into translatable parts and literal formatting atoms."""
+        parts: list[tuple[bool, str]] = []
+        cursor = 0
+        for match in self._pattern.finditer(text):
+            if not self._is_format_atom(match.group(0)):
+                continue
+            if match.start() > cursor:
+                parts.append((False, text[cursor:match.start()]))
+            parts.append((True, match.group(0)))
+            cursor = match.end()
+        if cursor < len(text):
+            parts.append((False, text[cursor:]))
+        return parts or [(False, text)]
 
     def protect(self, text: str) -> tuple[str, dict[str, str]]:
         replacements: dict[str, str] = {}
 
         def replace(match: re.Match[str]) -> str:
             value = match.group(0)
+            if not self._is_format_atom(value):
+                return value
             digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8].upper()
             token = f"__NT_FMT_{len(replacements):04d}_{digest}__"
             while token in replacements or token in text:
