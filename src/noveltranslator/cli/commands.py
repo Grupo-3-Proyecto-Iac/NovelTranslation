@@ -266,6 +266,8 @@ def download(url: str = typer.Argument(..., help="URL de la novela"), limit: int
 def run(
     url: str = typer.Argument(..., help="URL de la novela"),
     limit: int | None = typer.Option(None, "--limit", min=1, help="Capítulos nuevos a procesar en esta ejecución"),
+    from_chapter: int | None = typer.Option(None, "--from-chapter", min=0, help="Primer capítulo incluido"),
+    to_chapter: int | None = typer.Option(None, "--to-chapter", min=0, help="Último capítulo incluido"),
     translator: str | None = typer.Option(None, "--translator", help="Traductor: mock, huggingface u ollama"),
     translation_id: str = typer.Option("default", "--translation-id", help="Identificador de la traducción persistida"),
     format: str = typer.Option("epub", "--format", help="Formato final: txt, json, html o epub"),
@@ -282,11 +284,11 @@ def run(
         with reporter:
             reporter.info("Iniciando pipeline: descarga -> análisis -> traducción -> validación -> exportación")
             manager = access_manager()
-            download_summary = download_service(manager, reporter).download_novel(url, limit=limit, force=force)
+            download_summary = download_service(manager, reporter).download_novel(url, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
             novel_id = download_summary.novel_id
             reporter.info(f"Novela local: {novel_id} · {download_summary.downloaded_now} descargados · {download_summary.skipped} omitidos · {download_summary.pending} pendientes")
 
-            analysis_summary = analysis_service(reporter).analyze_novel(novel_id, limit=limit, force=force)
+            analysis_summary = analysis_service(reporter).analyze_novel(novel_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
             reporter.info(f"Análisis: {analysis_summary.analyzed_now} nuevos · {analysis_summary.skipped} omitidos · {analysis_summary.pending} pendientes")
 
             registry, options = translation_registry()
@@ -298,6 +300,8 @@ def run(
                 source_language=options.get("source_language"),
                 target_language=str(options.get("target_language", "es")),
                 limit=limit,
+                from_chapter=from_chapter,
+                to_chapter=to_chapter,
                 force=force,
             )
             reporter.info(f"Traducción: {translation_summary.chunks_translated} chunks nuevos · {translation_summary.chunks_skipped} omitidos · {translation_summary.pending} pendientes")
@@ -306,6 +310,8 @@ def run(
                 novel_id,
                 translation_id=translation_id,
                 limit=limit,
+                from_chapter=from_chapter,
+                to_chapter=to_chapter,
                 reuse_existing=True,
             )
             reporter.info(f"Validación: {validation_summary.ok} OK · {validation_summary.warnings} avisos · {validation_summary.failed} fallidos")
@@ -317,6 +323,8 @@ def run(
                 include_warnings=include_warnings,
                 allow_partial=allow_partial,
                 overwrite=overwrite,
+                from_chapter=from_chapter,
+                to_chapter=to_chapter,
             )
             reporter.info(f"Pipeline terminado. Archivo: {result.output_path}")
     except (NovelTranslatorError, ExportError, KeyError, ValueError, OSError) as error:
