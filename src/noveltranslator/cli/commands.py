@@ -24,6 +24,8 @@ from noveltranslator.storage.repository import NovelRepository
 from noveltranslator.translators import HuggingFaceTranslator, MockTranslator, OllamaTranslator, TranslatorRegistry
 from noveltranslator.validation.chunk_validator import ChunkValidator
 from noveltranslator.application.validation_service import ValidationService
+from noveltranslator.application.events import ProgressCallback
+from noveltranslator.cli.progress import RunProgress
 
 app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web.")
 source_app = typer.Typer(help="Gestiona las fuentes registradas.")
@@ -61,23 +63,23 @@ def access_manager(no_delay: bool = False) -> AccessManager:
     return AccessManager(HttpClient(access_config, RetryConfig.from_mapping(values.get("retry", {}))))
 
 
-def download_service(manager: AccessManager) -> DownloadService:
+def download_service(manager: AccessManager, progress_callback: ProgressCallback | None = None) -> DownloadService:
     config_path = CONFIG_ROOT / "config.yaml"
     if not config_path.is_file():
         config_path = CONFIG_ROOT / "config.example.yaml"
     values = load_yaml(config_path)
     options = values.get("download", {})
-    return DownloadService(default_registry(manager), repository(), on_chapter_error=options.get("on_chapter_error", "stop"), skip_existing=bool(options.get("skip_existing", True)), refresh_metadata=bool(options.get("refresh_metadata", True)))
+    return DownloadService(default_registry(manager), repository(), on_chapter_error=options.get("on_chapter_error", "stop"), skip_existing=bool(options.get("skip_existing", True)), refresh_metadata=bool(options.get("refresh_metadata", True)), progress_callback=progress_callback)
 
 
-def analysis_service() -> AnalysisService:
+def analysis_service(progress_callback: ProgressCallback | None = None) -> AnalysisService:
     config_path = CONFIG_ROOT / "config.yaml"
     if not config_path.is_file():
         config_path = CONFIG_ROOT / "config.example.yaml"
     values = load_yaml(config_path)
     chunking = values.get("processing", {}).get("chunking", {})
     splitter = TextSplitter(max_characters=int(chunking.get("max_characters", 6000)), target_characters=int(chunking.get("target_characters", 4500)), overlap_paragraphs=int(chunking.get("overlap_paragraphs", 1)))
-    return AnalysisService(repository(), splitter=splitter)
+    return AnalysisService(repository(), splitter=splitter, progress_callback=progress_callback)
 
 
 def translation_registry() -> tuple[TranslatorRegistry, dict]:
@@ -104,7 +106,7 @@ def memory_manager(novel_id: str) -> MemoryManager:
     return MemoryManager(repository(), novel_id)
 
 
-def translation_service(registry: TranslatorRegistry, options: dict) -> TranslationService:
+def translation_service(registry: TranslatorRegistry, options: dict, progress_callback: ProgressCallback | None = None) -> TranslationService:
     memory = options.get("memory", {})
     validation = options.get("validation", {})
     ratio = validation.get("length_ratio", {})
@@ -120,10 +122,11 @@ def translation_service(registry: TranslatorRegistry, options: dict) -> Translat
         previous_chapters=int(memory.get("context", {}).get("previous_chapters", 2)),
         auto_validate=bool(validation.get("auto_validate_after_translation", False)),
         validation_service=ValidationService(repository(), chunk_validator=chunk_validator),
+        progress_callback=progress_callback,
     )
 
 
-def validation_service_from_config() -> ValidationService:
+def validation_service_from_config(progress_callback: ProgressCallback | None = None) -> ValidationService:
     config_path = CONFIG_ROOT / "config.yaml"
     if not config_path.is_file():
         config_path = CONFIG_ROOT / "config.example.yaml"
@@ -132,7 +135,7 @@ def validation_service_from_config() -> ValidationService:
     ratio = options.get("length_ratio", {})
     untranslated = options.get("untranslated_detection", {})
     validator = ChunkValidator(min_length_ratio=float(ratio.get("min", 0.35)), max_length_ratio=float(ratio.get("max", 2.50)), untranslated_threshold=float(untranslated.get("warning_threshold", 0.30)), untranslated_enabled=bool(untranslated.get("enabled", True)), locked_missing_is_failure=bool(options.get("locked_terms", {}).get("missing_is_failure", True)))
-    return ValidationService(repository(), chunk_validator=validator)
+    return ValidationService(repository(), chunk_validator=validator, progress_callback=progress_callback)
 
 
 @source_app.command("list")
@@ -178,7 +181,8 @@ def access_check(url: str = typer.Argument(..., help="Una URL HTTP/HTTPS"), no_d
 
 @app.command()
 def analyze(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0), force: bool = typer.Option(False, "--force")) -> None:
-    summary = analysis_service().analyze_novel(novel_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
+    with RunProgress() as reporter:
+        summary = analysis_service(reporter).analyze_novel(novel_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
     typer.echo(f"Novel: {summary.novel_id}")
     typer.echo(f"Analyzed now: {summary.analyzed_now}")
     typer.echo(f"Skipped: {summary.skipped}")
@@ -246,11 +250,83 @@ def inspect_chapter(url: str = typer.Argument(..., help="URL del capítulo"), pr
 @app.command()
 def download(url: str = typer.Argument(..., help="URL de la novela"), limit: int | None = typer.Option(None, "--limit", min=1, help="Número máximo de capítulos pendientes"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0), force: bool = typer.Option(False, "--force", help="Reemplaza source.json existentes de forma explícita")) -> None:
     manager = access_manager()
+    reporter = RunProgress()
     try:
-        summary = download_service(manager).download_novel(url, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
+        with reporter:
+            service = download_service(manager)
+            if hasattr(service, "progress_callback"):
+                service.progress_callback = reporter
+            summary = service.download_novel(url, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter, force=force)
     finally:
         manager.close()
     _display_download_summary(summary)
+
+
+@app.command()
+def run(
+    url: str = typer.Argument(..., help="URL de la novela"),
+    limit: int | None = typer.Option(None, "--limit", min=1, help="Capítulos nuevos a procesar en esta ejecución"),
+    translator: str | None = typer.Option(None, "--translator", help="Traductor: mock, huggingface u ollama"),
+    translation_id: str = typer.Option("default", "--translation-id", help="Identificador de la traducción persistida"),
+    format: str = typer.Option("epub", "--format", help="Formato final: txt, json, html o epub"),
+    include_warnings: bool = typer.Option(False, "--include-warnings", help="Incluye capítulos con advertencias de validación"),
+    allow_partial: bool = typer.Option(False, "--allow-partial", help="Permite exportar capítulos con chunks faltantes"),
+    overwrite: bool = typer.Option(True, "--overwrite/--no-overwrite", help="Reemplaza el archivo de exportación existente (por defecto en run)"),
+    force: bool = typer.Option(False, "--force", help="Reprocesa artefactos existentes de forma explícita"),
+) -> None:
+    """Ejecuta el flujo completo y muestra su progreso en tiempo real."""
+    reporter = RunProgress()
+    manager = None
+    registry = None
+    try:
+        with reporter:
+            reporter.info("Iniciando pipeline: descarga -> análisis -> traducción -> validación -> exportación")
+            manager = access_manager()
+            download_summary = download_service(manager, reporter).download_novel(url, limit=limit, force=force)
+            novel_id = download_summary.novel_id
+            reporter.info(f"Novela local: {novel_id} · {download_summary.downloaded_now} descargados · {download_summary.skipped} omitidos · {download_summary.pending} pendientes")
+
+            analysis_summary = analysis_service(reporter).analyze_novel(novel_id, limit=limit, force=force)
+            reporter.info(f"Análisis: {analysis_summary.analyzed_now} nuevos · {analysis_summary.skipped} omitidos · {analysis_summary.pending} pendientes")
+
+            registry, options = translation_registry()
+            selected_translator = translator or str(options.get("provider", "mock"))
+            translation_summary = translation_service(registry, options, reporter).translate_novel(
+                novel_id,
+                translation_id=translation_id,
+                translator_id=selected_translator,
+                source_language=options.get("source_language"),
+                target_language=str(options.get("target_language", "es")),
+                limit=limit,
+                force=force,
+            )
+            reporter.info(f"Traducción: {translation_summary.chunks_translated} chunks nuevos · {translation_summary.chunks_skipped} omitidos · {translation_summary.pending} pendientes")
+
+            validation_summary = validation_service_from_config(reporter).validate_novel(
+                novel_id,
+                translation_id=translation_id,
+                limit=limit,
+                reuse_existing=True,
+            )
+            reporter.info(f"Validación: {validation_summary.ok} OK · {validation_summary.warnings} avisos · {validation_summary.failed} fallidos")
+
+            result = ExportService(repository(), progress_callback=reporter).export_novel(
+                novel_id,
+                format_id=format,
+                translation_id=translation_id,
+                include_warnings=include_warnings,
+                allow_partial=allow_partial,
+                overwrite=overwrite,
+            )
+            reporter.info(f"Pipeline terminado. Archivo: {result.output_path}")
+    except (NovelTranslatorError, ExportError, KeyError, ValueError, OSError) as error:
+        reporter.info(f"Pipeline detenido: {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        if registry is not None:
+            close_translation_registry(registry)
+        if manager is not None:
+            manager.close()
 
 
 def _display_download_summary(summary) -> None:
@@ -268,7 +344,8 @@ def translate(novel_id: str = typer.Argument(..., help="Identificador local de n
     registry, options = translation_registry()
     selected = translator or str(options.get("provider", "mock"))
     try:
-        summary = translation_service(registry, options).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
+        with RunProgress() as reporter:
+            summary = translation_service(registry, options, reporter).translate_novel(novel_id, translation_id=translation_id, translator_id=selected, source_language=options.get("source_language"), target_language=str(options.get("target_language", "es")), limit=limit, force=force)
     except NovelTranslatorError as error:
         typer.echo(f"Translation failed: {error}", err=True)
         raise typer.Exit(code=1) from error
@@ -298,7 +375,8 @@ def translation_show(novel_id: str = typer.Argument(...), chapter: int = typer.A
 
 @app.command()
 def validate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=1), to_chapter: int | None = typer.Option(None, "--to-chapter", min=1)) -> None:
-    summary = validation_service_from_config().validate_novel(novel_id, translation_id=translation_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter)
+    with RunProgress() as reporter:
+        summary = validation_service_from_config(reporter).validate_novel(novel_id, translation_id=translation_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter)
     _display_validation_summary(summary)
 
 

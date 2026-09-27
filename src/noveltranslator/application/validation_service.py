@@ -1,6 +1,7 @@
 import logging
 from dataclasses import asdict
 
+from noveltranslator.application.events import ProgressCallback, ProgressEvent, emit_progress
 from noveltranslator.core.enums import ProcessingState
 from noveltranslator.storage.progress_manager import ProgressManager
 from noveltranslator.storage.repository import NovelRepository
@@ -12,9 +13,10 @@ logger = logging.getLogger("noveltranslator.application.validation")
 
 
 class ValidationService:
-    def __init__(self, repository: NovelRepository, *, chunk_validator: ChunkValidator | None = None) -> None:
+    def __init__(self, repository: NovelRepository, *, chunk_validator: ChunkValidator | None = None, progress_callback: ProgressCallback | None = None) -> None:
         self.repository = repository
         self.chapter_validator = ChapterValidator(repository, chunk_validator=chunk_validator)
+        self.progress_callback = progress_callback
 
     def validate_chapter(self, novel_id: str, chapter_number: int, translation_id: str = "default", *, progress: ProgressManager | None = None, reuse_existing: bool = False) -> ValidationResult:
         if reuse_existing and self.repository.validation_exists(novel_id, chapter_number, translation_id):
@@ -26,6 +28,7 @@ class ValidationService:
             progress.set_current_chapter(chapter_number)
             progress.set_stage(ProcessingState.VALIDATING)
         logger.info("Validation started: %s/%03d", novel_id, chapter_number)
+        emit_progress(self.progress_callback, ProgressEvent("validation", "item_started", novel_id, chapter_number, message=f"Validando capítulo {chapter_number:03d}"))
         result = self.chapter_validator.validate_chapter(novel_id, chapter_number, translation_id)
         self.repository.save_validation_result(novel_id, chapter_number, translation_id, asdict(result))
         self.repository.save_chapter_metadata(novel_id, chapter_number, {"status": ProcessingState.COMPLETED.value if result.status is not ValidationStatus.FAILED else ProcessingState.FAILED.value, "needs_review": result.needs_review})
@@ -35,6 +38,7 @@ class ValidationService:
                 progress.mark_chapter_failed(chapter_number, ValueError("chapter validation failed"))
             else:
                 progress.mark_chapter_completed(chapter_number)
+        emit_progress(self.progress_callback, ProgressEvent("validation", "item_completed" if result.status is not ValidationStatus.FAILED else "item_failed", novel_id, chapter_number, message=f"Capítulo {chapter_number:03d}: {result.status.value}"))
         return result
 
     def validate_novel(self, novel_id: str, *, translation_id: str = "default", limit: int | None = None, from_chapter: int | None = None, to_chapter: int | None = None, reuse_existing: bool = False) -> ValidationSummary:
@@ -43,6 +47,8 @@ class ValidationService:
         progress = ProgressManager(self.repository, novel_id)
         progress.start_novel()
         summary = ValidationSummary(novel_id)
+        eligible = [number for number in self.repository.list_chapters(novel_id) if (from_chapter is None or number >= from_chapter) and (to_chapter is None or number <= to_chapter) and self.repository.list_translation_chunks(novel_id, number, translation_id)]
+        emit_progress(self.progress_callback, ProgressEvent("validation", "stage_started", novel_id, total=len(eligible), message=f"{len(eligible)} capítulos con traducción"))
         for number in self.repository.list_chapters(novel_id):
             if from_chapter is not None and number < from_chapter or to_chapter is not None and number > to_chapter:
                 continue
@@ -71,6 +77,7 @@ class ValidationService:
             progress.fail()
         elif summary.chapters_total:
             progress.complete()
+        emit_progress(self.progress_callback, ProgressEvent("validation", "stage_completed", novel_id, current=summary.chapters_total, total=len(eligible), message=f"{summary.ok} OK, {summary.warnings} con avisos, {summary.failed} fallidos"))
         return summary
 
     @staticmethod

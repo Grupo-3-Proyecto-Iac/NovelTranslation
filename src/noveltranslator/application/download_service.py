@@ -5,6 +5,7 @@ from typing import Iterable
 from noveltranslator.core.enums import ProcessingState
 from noveltranslator.core.exceptions import CorruptedDataError, NovelNotFoundError
 from noveltranslator.core.models import Chapter, Novel
+from noveltranslator.application.events import ProgressCallback, ProgressEvent, emit_progress
 from noveltranslator.sources.registry import SourceRegistry
 from noveltranslator.storage.progress_manager import ProgressManager
 from noveltranslator.storage.repository import NovelRepository
@@ -27,7 +28,7 @@ class DownloadSummary:
 class DownloadService:
     """Coordinates sequential, persistent chapter acquisition."""
 
-    def __init__(self, registry: SourceRegistry, repository: NovelRepository, *, on_chapter_error: str = "stop", refresh_metadata: bool = True, skip_existing: bool = True) -> None:
+    def __init__(self, registry: SourceRegistry, repository: NovelRepository, *, on_chapter_error: str = "stop", refresh_metadata: bool = True, skip_existing: bool = True, progress_callback: ProgressCallback | None = None) -> None:
         if on_chapter_error not in {"stop", "skip"}:
             raise ValueError("on_chapter_error must be 'stop' or 'skip'")
         self.registry = registry
@@ -35,6 +36,7 @@ class DownloadService:
         self.on_chapter_error = on_chapter_error
         self.refresh_metadata = refresh_metadata
         self.skip_existing = skip_existing
+        self.progress_callback = progress_callback
 
     def download_novel(self, url: str, *, limit: int | None = None, from_chapter: int | None = None, to_chapter: int | None = None, force: bool = False) -> DownloadSummary:
         if limit is not None and limit < 1:
@@ -81,6 +83,7 @@ class DownloadService:
         progress = ProgressManager(self.repository, novel_id)
         progress.start_novel()
         selected = [chapter for chapter in chapters if (from_chapter is None or chapter.number >= from_chapter) and (to_chapter is None or chapter.number <= to_chapter)]
+        emit_progress(self.progress_callback, ProgressEvent("download", "stage_started", novel_id, total=len(selected), message=f"{len(selected)} capítulos seleccionados"))
         downloaded = skipped = failed = 0
         paused = False
         for chapter in selected:
@@ -88,18 +91,21 @@ class DownloadService:
             if valid and self.skip_existing and not force:
                 skipped += 1
                 self.repository.save_chapter_metadata(novel_id, chapter.number, {"status": ProcessingState.DOWNLOADED.value})
+                emit_progress(self.progress_callback, ProgressEvent("download", "item_skipped", novel_id, chapter.number, skipped + downloaded, len(selected), f"Capítulo {chapter.number:03d} ya descargado; se omite"))
                 continue
             if self.repository.source_exists(novel_id, chapter.number) and not valid and not force:
                 error = CorruptedDataError(f"Invalid source.json for chapter {chapter.number}; use --force to replace it")
                 self.repository.save_chapter_metadata(novel_id, chapter.number, {"status": ProcessingState.FAILED.value, "error_type": type(error).__name__, "error_message": str(error)})
                 progress.mark_chapter_failed(chapter.number, error)
                 failed += 1
+                emit_progress(self.progress_callback, ProgressEvent("download", "item_failed", novel_id, chapter.number, skipped + downloaded + failed, len(selected), str(error)))
                 if self.on_chapter_error == "stop":
                     break
                 continue
             if limit is not None and downloaded >= limit:
                 break
             try:
+                emit_progress(self.progress_callback, ProgressEvent("download", "item_started", novel_id, chapter.number, skipped + downloaded + failed + 1, len(selected), f"Descargando capítulo {chapter.number:03d}"))
                 progress.set_current_chapter(chapter.number)
                 progress.set_stage(ProcessingState.DOWNLOADING)
                 self.repository.save_chapter_metadata(novel_id, chapter.number, {"status": ProcessingState.DOWNLOADING.value})
@@ -110,6 +116,7 @@ class DownloadService:
                 self.repository.save_chapter_metadata(novel_id, chapter.number, {"status": ProcessingState.DOWNLOADED.value, "error_type": None, "error_message": None})
                 progress.mark_chapter_completed(chapter.number)
                 downloaded += 1
+                emit_progress(self.progress_callback, ProgressEvent("download", "item_completed", novel_id, chapter.number, skipped + downloaded, len(selected), f"Capítulo {chapter.number:03d} descargado"))
                 logger.info("Chapter downloaded: %s/%03d", novel_id, chapter.number)
             except KeyboardInterrupt:
                 paused = True
@@ -119,6 +126,7 @@ class DownloadService:
                 break
             except Exception as error:
                 failed += 1
+                emit_progress(self.progress_callback, ProgressEvent("download", "item_failed", novel_id, chapter.number, skipped + downloaded + failed, len(selected), f"Error en capítulo {chapter.number:03d}: {error}"))
                 self.repository.save_chapter_metadata(novel_id, chapter.number, {"status": ProcessingState.FAILED.value, "error_type": type(error).__name__, "error_message": str(error)[:500]})
                 progress.mark_chapter_failed(chapter.number, error)
                 logger.error("Chapter failed: %s/%03d (%s)", novel_id, chapter.number, type(error).__name__)
@@ -129,6 +137,7 @@ class DownloadService:
         if completed:
             progress.complete()
             logger.info("Download completed: %s", novel_id)
+        emit_progress(self.progress_callback, ProgressEvent("download", "stage_completed", novel_id, current=downloaded + skipped + failed, total=len(selected), message=f"{downloaded} descargados, {skipped} omitidos, {failed} fallidos"))
         return DownloadSummary(novel_id, len(chapters), downloaded, skipped, failed, pending, completed, paused)
 
     def _valid_source(self, novel_id: str, number: int) -> bool:

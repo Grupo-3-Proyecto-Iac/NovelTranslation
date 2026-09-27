@@ -2,6 +2,7 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
+from noveltranslator.application.events import ProgressCallback, ProgressEvent, emit_progress
 from noveltranslator.core.exceptions import ExportError
 from noveltranslator.exporters import ChapterAssembler, EpubExporter, ExportBook, ExportRequest, ExportResult, ExporterRegistry, HtmlExporter, JsonExporter, TxtExporter
 from noveltranslator.storage.identifiers import slugify
@@ -12,10 +13,11 @@ logger = logging.getLogger("noveltranslator.application.export")
 
 
 class ExportService:
-    def __init__(self, repository: NovelRepository, registry: ExporterRegistry | None = None) -> None:
+    def __init__(self, repository: NovelRepository, registry: ExporterRegistry | None = None, *, progress_callback: ProgressCallback | None = None) -> None:
         self.repository = repository
         self.registry = registry or self.default_registry()
         self.assembler = ChapterAssembler(repository)
+        self.progress_callback = progress_callback
 
     @staticmethod
     def default_registry() -> ExporterRegistry:
@@ -29,6 +31,7 @@ class ExportService:
         target_language = "es"
         chapter_numbers = self.repository.list_chapters(novel_id)
         selected = [number for number in chapter_numbers if (from_chapter is None or number >= from_chapter) and (to_chapter is None or number <= to_chapter)]
+        emit_progress(self.progress_callback, ProgressEvent("export", "stage_started", novel_id, total=len(selected), message=f"Preparando exportación {format_id.upper()}"))
         chapters = []
         warnings: list[str] = []
         skipped = 0
@@ -38,20 +41,25 @@ class ExportService:
             if validation_status == "FAILED":
                 warnings.append(f"Chapter {number} skipped: validation failed.")
                 skipped += 1
+                emit_progress(self.progress_callback, ProgressEvent("export", "item_skipped", novel_id, number, skipped, len(selected), f"Capítulo {number:03d} omitido: validación fallida"))
                 continue
             if only_validated and validation_status is None:
                 warnings.append(f"Chapter {number} skipped: validation result is missing.")
                 skipped += 1
+                emit_progress(self.progress_callback, ProgressEvent("export", "item_skipped", novel_id, number, skipped, len(selected), f"Capítulo {number:03d} omitido: falta validación"))
                 continue
             if validation_status == "WARNING" and not include_warnings:
                 warnings.append(f"Chapter {number} skipped: validation has warnings.")
                 skipped += 1
+                emit_progress(self.progress_callback, ProgressEvent("export", "item_skipped", novel_id, number, skipped, len(selected), f"Capítulo {number:03d} omitido: tiene avisos"))
                 continue
             try:
                 chapters.append(self.assembler.assemble_chapter(novel_id, number, translation_id, allow_partial=allow_partial, validation_status=validation_status or "UNVALIDATED"))
+                emit_progress(self.progress_callback, ProgressEvent("export", "item_completed", novel_id, number, len(chapters) + skipped, len(selected), f"Capítulo {number:03d} preparado para exportar"))
             except ExportError as error:
                 warnings.append(str(error))
                 skipped += 1
+                emit_progress(self.progress_callback, ProgressEvent("export", "item_skipped", novel_id, number, len(chapters) + skipped, len(selected), f"Capítulo {number:03d} omitido: {error}"))
         if not chapters:
             raise ExportError("No chapters are eligible for export.")
         cover_path = self._local_cover(metadata, novel_id)
@@ -62,6 +70,7 @@ class ExportService:
         result = self.registry.resolve(format_id).export(request, book)
         result = replace(result, chapters_skipped=skipped, warnings=warnings, created_at=utc_now_iso())
         logger.info("Export completed: %s", result.output_path)
+        emit_progress(self.progress_callback, ProgressEvent("export", "stage_completed", novel_id, current=len(chapters) + skipped, total=len(selected), message=f"Exportado a {result.output_path}"))
         return result
 
     def _default_destination(self, novel_id: str, title: str, target_language: str, translation_id: str, format_id: str) -> Path:

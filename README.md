@@ -60,6 +60,26 @@ noveltranslator status NOVEL_ID
 noveltranslator resume
 ```
 
+Para ejecutar el flujo completo con una sola orden y ver el avance en tiempo real:
+
+```bash
+noveltranslator run "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --limit 1 --translator mock --format epub
+```
+
+`run` encadena descarga, análisis, traducción, validación y exportación. Rich muestra la etapa actual, el capítulo, los chunks, el tiempo transcurrido y una estimación del tiempo restante cuando es posible. También puedes usar los comandos individuales: `download`, `analyze`, `translate` y `validate` muestran la misma clase de progreso.
+
+El flujo es reanudable e idempotente. Si un capítulo ya tiene un artefacto válido, se muestra como `omitido` y se busca el siguiente pendiente. Por ejemplo, con `--limit 1`, un capítulo 001 ya descargado no consume el límite: se salta y se descarga el primer capítulo pendiente. `--force` solo debe usarse cuando quieras reprocesar explícitamente.
+
+En `run`, la exportación final se actualiza por defecto para que repetir la orden después de descargar o traducir capítulos nuevos no falle porque ya existe el EPUB. Usa `--no-overwrite` si prefieres detenerte cuando el archivo final ya existe.
+
+Opciones útiles de `run`:
+
+```bash
+noveltranslator run URL --limit 1 --translator huggingface --translation-id hf-opus --format epub
+noveltranslator run URL --translator mock --format txt --include-warnings
+noveltranslator run URL --force --overwrite
+```
+
 `inspect` y `download` realizan adquisición controlada; `translate`, `validate` y `export` completan el flujo local del MVP con `mock` u `ollama` opcional.
 
 `download` ya es el primer flujo operativo completo de adquisición:

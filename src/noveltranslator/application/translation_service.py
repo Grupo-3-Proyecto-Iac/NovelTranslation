@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 
 from noveltranslator.analysis.context_builder import ContextBuilder
+from noveltranslator.application.events import ProgressCallback, ProgressEvent, emit_progress
 from noveltranslator.core.enums import EntityStatus, EntityType, GlossaryStatus, ProcessingState
 from noveltranslator.core.models import Chunk, Entity, GlossaryTerm, TranslationMemoryEntry
 from noveltranslator.processing.glossary import GlossaryManager
@@ -34,7 +35,7 @@ class TranslationSummary:
 
 
 class TranslationService:
-    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1, memory_enabled: bool = True, max_translation_entries: int = 20, max_context_items: int = 20, previous_chapters: int = 2, auto_validate: bool = False, validation_service: ValidationService | None = None) -> None:
+    def __init__(self, repository: NovelRepository, registry: TranslatorRegistry, *, context_builder: ContextBuilder | None = None, validator: TranslationValidator | None = None, protector: ProtectedTermProtector | None = None, max_attempts: int = 1, memory_enabled: bool = True, max_translation_entries: int = 20, max_context_items: int = 20, previous_chapters: int = 2, auto_validate: bool = False, validation_service: ValidationService | None = None, progress_callback: ProgressCallback | None = None) -> None:
         self.repository = repository
         self.registry = registry
         self.context_builder = context_builder or ContextBuilder()
@@ -48,6 +49,7 @@ class TranslationService:
         self.previous_chapters = max(0, int(previous_chapters))
         self.auto_validate = auto_validate
         self.validation_service = validation_service or ValidationService(repository)
+        self.progress_callback = progress_callback
 
     def translate_novel(self, novel_id: str, *, translation_id: str = "default", translator_id: str = "mock", source_language: str | None = None, target_language: str = "es", limit: int | None = None, from_chapter: int | None = None, to_chapter: int | None = None, force: bool = False) -> TranslationSummary:
         if limit is not None and limit < 1:
@@ -62,6 +64,8 @@ class TranslationService:
         memory = MemoryManager(self.repository, novel_id)
         processed = translated = skipped = failed = 0
         paused = False
+        eligible = [number for number in chapters if (from_chapter is None or number >= from_chapter) and (to_chapter is None or number <= to_chapter) and self.repository.chunks_exist(novel_id, number)]
+        emit_progress(self.progress_callback, ProgressEvent("translation", "stage_started", novel_id, total=len(eligible), message=f"Traductor: {translator.id} / {translator.model_id}"))
         for number in chapters:
             if from_chapter is not None and number < from_chapter or to_chapter is not None and number > to_chapter:
                 continue
@@ -71,10 +75,12 @@ class TranslationService:
                 continue
             chapter_metadata = self.repository.load_chapter_metadata(novel_id, number)
             try:
+                emit_progress(self.progress_callback, ProgressEvent("translation", "item_started", novel_id, number, processed + 1, len(eligible), f"Traduciendo capítulo {number:03d}"))
                 result = self._translate_chapter(novel_id, number, metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language, memory)
                 translated += result[0]
                 skipped += result[1]
                 processed += 1
+                emit_progress(self.progress_callback, ProgressEvent("translation", "item_completed", novel_id, number, processed, len(eligible), f"Capítulo {number:03d} traducido: {result[0]} chunks nuevos, {result[1]} omitidos"))
             except KeyboardInterrupt:
                 paused = True
                 self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.PAUSED.value})
@@ -82,6 +88,7 @@ class TranslationService:
                 break
             except Exception as error:
                 failed += 1
+                emit_progress(self.progress_callback, ProgressEvent("translation", "item_failed", novel_id, number, processed + failed, len(eligible), f"Error en capítulo {number:03d}: {error}"))
                 self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.FAILED.value, "error_type": type(error).__name__, "error_message": str(error)[:500]})
                 progress.mark_chapter_failed(number, error)
                 logger.error("Translation failed: %s/%03d", novel_id, number)
@@ -90,6 +97,7 @@ class TranslationService:
         completed = pending == 0 and failed == 0 and not paused and any(self.repository.chunks_exist(novel_id, number) for number in chapters)
         if completed:
             progress.complete()
+        emit_progress(self.progress_callback, ProgressEvent("translation", "stage_completed", novel_id, current=processed, total=len(eligible), message=f"{translated} chunks traducidos, {skipped} omitidos, {failed} fallidos"))
         return TranslationSummary(novel_id, translation_id, processed, translated, skipped, failed, pending, completed, paused)
 
     def _translate_chapter(self, novel_id, number, novel_metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language, memory: MemoryManager) -> tuple[int, int]:
@@ -111,11 +119,13 @@ class TranslationService:
                 if self.memory_enabled:
                     self._reconcile_chunk_memory(memory, novel_id, number, chunk, translation_id, current_hash)
                 skipped += 1
+                emit_progress(self.progress_callback, ProgressEvent("translation", "chunk_skipped", novel_id, number, chunk.index + 1, len(chunks), f"Capítulo {number:03d} · chunk {chunk.index + 1}/{len(chunks)} ya existe"))
                 previous.append(chunk)
                 continue
             progress.set_current_chapter(number)
             progress.set_stage(ProcessingState.TRANSLATING)
             progress.set_chunk_progress(chunk.index, len(chunks))
+            emit_progress(self.progress_callback, ProgressEvent("translation", "chunk_started", novel_id, number, chunk.index + 1, len(chunks), f"Capítulo {number:03d} · traduciendo chunk {chunk.index + 1}/{len(chunks)}"))
             source_language_value = source_language or novel_metadata.get("language", "en")
             relevant_memory = memory.find_relevant(chunk.source_text, source_language=source_language_value, target_language=target_language, translation_id=translation_id, max_items=self.max_translation_entries) if self.memory_enabled else []
             locked_keys = {normalized_key(term.term) for term in glossary if term.locked or term.status is GlossaryStatus.CONFIRMED}
@@ -140,6 +150,7 @@ class TranslationService:
             if self.memory_enabled:
                 self._record_chunk_memory(memory, chunk, clean, result.source_language, result.target_language, number, translation_id, current_hash, protected_terms)
             translated += 1
+            emit_progress(self.progress_callback, ProgressEvent("translation", "chunk_completed", novel_id, number, chunk.index + 1, len(chunks), f"Capítulo {number:03d} · chunk {chunk.index + 1}/{len(chunks)} completado"))
             previous.append(chunk)
         self.repository.save_chapter_metadata(novel_id, number, {"status": ProcessingState.TRANSLATED.value})
         if self.memory_enabled:
