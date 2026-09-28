@@ -14,5 +14,6 @@ data/novels/*
 data/cache/*
 data/sessions/*
 data/logs/*
+data/sessions/browser/*
 !data/**/.gitkeep
 

@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 huggingface = ["transformers>=4.40", "torch>=2.2"]
+browser = ["playwright>=1.40"]
 
 [project.scripts]
 noveltranslator = "noveltranslator.cli.commands:app"

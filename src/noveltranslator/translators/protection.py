@@ -7,6 +7,30 @@ from noveltranslator.core.models import GlossaryTerm
 class ProtectedTermProtector:
     """Replaces locked/preserve terms with collision-resistant placeholders."""
 
+    def split(self, text: str, terms: list[GlossaryTerm]) -> list[tuple[bool, str, GlossaryTerm | None]]:
+        """Split text so protected glossary terms never enter the model.
+
+        Returning literal translated segments avoids relying on model-specific
+        placeholder preservation, which Marian can otherwise corrupt.
+        """
+        protected = [term for term in terms if term.locked or term.preserve]
+        protected.sort(key=lambda item: len(item.term), reverse=True)
+        if not protected:
+            return [(False, text, None)]
+        pattern = re.compile("|".join(re.escape(term.term) for term in protected), re.IGNORECASE)
+        result: list[tuple[bool, str, GlossaryTerm | None]] = []
+        cursor = 0
+        for match in pattern.finditer(text):
+            if match.start() > cursor:
+                result.append((False, text[cursor:match.start()], None))
+            matched = next(term for term in protected if term.term.casefold() == match.group(0).casefold())
+            replacement = matched.translation if matched.locked and matched.translation else match.group(0)
+            result.append((True, replacement, matched))
+            cursor = match.end()
+        if cursor < len(text):
+            result.append((False, text[cursor:], None))
+        return result or [(False, text, None)]
+
     def protect(self, text: str, terms: list[GlossaryTerm]) -> tuple[str, dict[str, str], list[GlossaryTerm]]:
         protected = [term for term in terms if term.locked or term.preserve]
         protected.sort(key=lambda item: len(item.term), reverse=True)

@@ -9,6 +9,7 @@ from noveltranslator.application.events import ProgressCallback, ProgressEvent, 
 from noveltranslator.sources.registry import SourceRegistry
 from noveltranslator.storage.progress_manager import ProgressManager
 from noveltranslator.storage.repository import NovelRepository
+from noveltranslator.processing.normalizer import TextNormalizer
 
 logger = logging.getLogger("noveltranslator.application.download")
 
@@ -154,7 +155,7 @@ class DownloadService:
     def _validate_paragraphs(paragraphs: list[str]) -> list[str]:
         if not isinstance(paragraphs, list):
             raise ValueError("chapter paragraphs must be a list")
-        cleaned = [paragraph.strip() for paragraph in paragraphs if isinstance(paragraph, str) and paragraph.strip()]
+        cleaned = TextNormalizer().normalize(paragraphs)
         if not cleaned:
             raise ValueError("chapter has no valid paragraphs")
         return cleaned

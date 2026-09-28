@@ -76,6 +76,23 @@ class TranslationService:
                 continue
             chapter_metadata = self.repository.load_chapter_metadata(novel_id, number)
             try:
+                if not force and self._chapter_complete(novel_id, number, translation_id, translator):
+                    existing_chunks = len(self.repository.load_chunks(novel_id, number).get("chunks", []))
+                    skipped += existing_chunks
+                    processed += 1
+                    emit_progress(
+                        self.progress_callback,
+                        ProgressEvent(
+                            "translation",
+                            "item_completed",
+                            novel_id,
+                            number,
+                            processed,
+                            len(eligible),
+                            f"Capítulo {number:03d} omitido: todos sus chunks ya están traducidos",
+                        ),
+                    )
+                    continue
                 emit_progress(self.progress_callback, ProgressEvent("translation", "item_started", novel_id, number, processed + 1, len(eligible), f"Traduciendo capítulo {number:03d}"))
                 result = self._translate_chapter(novel_id, number, metadata, chapter_metadata, glossary, translator, translation_id, progress, force, source_language, target_language, memory)
                 translated += result[0]
@@ -145,19 +162,23 @@ class TranslationService:
                     if is_format:
                         plan.append(("literal", part, "", ""))
                         continue
-                    leading = part[:len(part) - len(part.lstrip())]
-                    trailing = part[len(part.rstrip()):]
-                    source_text = part.strip()
-                    if not source_text:
-                        plan.append(("literal", part, "", ""))
-                        continue
                     context = self.context_builder.build(novel_metadata["title"], chapter_metadata.get("title", ""), number, paragraph_chunk, previous, glossary, entities, relevant_memory, relevant_context)
-                    protected_text, replacements, paragraph_terms = self.protector.protect(source_text, context.glossary_terms)
-                    request_index = len(requests)
-                    requests.append(TranslationRequest(protected_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, paragraph_terms, context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context))
-                    replacements_by_request.append(replacements)
-                    protected_terms.extend(paragraph_terms)
-                    plan.append(("translation", request_index, leading, trailing))
+                    for is_term, term_part, matched_term in self.protector.split(part, context.glossary_terms):
+                        if is_term:
+                            plan.append(("literal", term_part, "", ""))
+                            if matched_term is not None:
+                                protected_terms.append(matched_term)
+                            continue
+                        leading = term_part[:len(term_part) - len(term_part.lstrip())]
+                        trailing = term_part[len(term_part.rstrip()):]
+                        source_text = term_part.strip()
+                        if not source_text:
+                            plan.append(("literal", term_part, "", ""))
+                            continue
+                        request_index = len(requests)
+                        requests.append(TranslationRequest(source_text, source_language_value, target_language, novel_metadata["title"], chapter_metadata.get("title", ""), number, chunk.index, context.previous_chunk_text, context.glossary_terms, [], context.entities, translation_memory=context.translation_memory, narrative_context=context.narrative_context))
+                        replacements_by_request.append({})
+                        plan.append(("translation", request_index, leading, trailing))
                 paragraph_plans.append(plan)
             results = None
             if requests:
@@ -174,7 +195,13 @@ class TranslationService:
                     raise ValueError(f"translator returned {len(results)} results for {len(requests)} text segments")
             else:
                 results = []
-            translated_segments = [self.validator.validate(self.protector.restore(item.translated_text, replacements), replacements) for item, replacements in zip(results, replacements_by_request, strict=True)]
+            translated_segments = [
+                self.validator.validate(
+                    self.protector.restore(self.normalizer.repair_mojibake(item.translated_text), replacements),
+                    replacements,
+                )
+                for item, replacements in zip(results, replacements_by_request, strict=True)
+            ]
             translated_paragraphs: list[str] = []
             for plan in paragraph_plans:
                 paragraph_result = ""

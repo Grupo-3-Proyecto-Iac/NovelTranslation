@@ -3,7 +3,8 @@ import pytest
 
 from noveltranslator.access.detection import classify_response
 from noveltranslator.access.http_client import HttpClient
-from noveltranslator.access.models import AccessConfig, AccessStatus, RetryConfig
+from noveltranslator.access.manager import AccessManager
+from noveltranslator.access.models import AccessConfig, AccessResponse, AccessStatus, RetryConfig
 from noveltranslator.access.rate_limiter import RateLimiter
 from noveltranslator.access.retry import RetryPolicy
 
@@ -155,3 +156,42 @@ def test_response_size_limit():
     response = client.get("https://example.test/large")
     client.close()
     assert response.access_status is AccessStatus.INVALID_RESPONSE
+
+
+def test_access_manager_uses_assisted_browser_only_for_blocked_http_response():
+    blocked = AccessResponse(
+        url="https://example.test/page", final_url="https://example.test/page",
+        status_code=403, headers={}, text="", elapsed=0.1,
+        access_status=AccessStatus.FORBIDDEN, attempts=1,
+    )
+    browser_response = AccessResponse(
+        url="https://example.test/page", final_url="https://example.test/page",
+        status_code=200, headers={}, text="<html>ok</html>", elapsed=0.2,
+        access_status=AccessStatus.OK, attempts=1,
+    )
+
+    class FakeHttp:
+        def get(self, url):
+            return blocked
+
+        def close(self):
+            pass
+
+    class FakeBrowser:
+        def __init__(self):
+            self.urls = []
+            self.closed = False
+
+        def fetch(self, url):
+            self.urls.append(url)
+            return browser_response
+
+        def close(self):
+            self.closed = True
+
+    browser = FakeBrowser()
+    manager = AccessManager(FakeHttp(), browser)
+    assert manager.fetch("https://example.test/page") is browser_response
+    manager.close()
+    assert browser.urls == ["https://example.test/page"]
+    assert browser.closed

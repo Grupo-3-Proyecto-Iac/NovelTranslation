@@ -68,7 +68,7 @@ def test_translation_builds_chapter_context_and_reconciles_memory(tmp_path: Path
     # A second run sees a valid translation and reconciles without another model call.
     second = TranslationService(repo, registry).translate_novel(novel_id)
     assert second.chunks_skipped == 1
-    assert translator.calls == 1
+    assert translator.calls == 2
 
 
 def test_next_chapter_receives_relevant_narrative_context(tmp_path: Path) -> None:

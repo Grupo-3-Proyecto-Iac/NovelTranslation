@@ -41,12 +41,18 @@ def test_translation_persists_and_is_idempotent(tmp_path: Path) -> None:
     assert "\n\n" in saved["translated_text"]
     assert saved["source_hash"]
     assert saved["translator_id"] == "mock"
-    assert translator.calls == 2
+    assert translator.calls == 3
 
     second = TranslationService(repo, registry).translate_novel(novel_id)
     assert second.chunks_skipped == 1
     assert second.chunks_translated == 0
-    assert translator.calls == 2
+    assert translator.calls == 3
+
+
+def test_text_normalizer_repairs_common_mojibake() -> None:
+    normalized = TextNormalizer().normalize(["didnâ€™t stay â€¦"])
+    assert normalized == ["didn’t stay …"]
+
 
 
 def test_translation_preserves_formatting_atoms(tmp_path: Path) -> None:
@@ -92,3 +98,14 @@ def test_validator_rejects_missing_or_leaked_protected_terms() -> None:
         validator.validate("Texto TOKEN", {"TOKEN": "Term"})
     with pytest.raises(ValueError):
         validator.validate("Texto", {"TOKEN": "Term"})
+
+
+def test_locked_terms_are_split_outside_the_translation_model() -> None:
+    protector = ProtectedTermProtector()
+    terms = [GlossaryTerm("Vermilion Princess", "TITLE", "Princesa Vermileon", True, GlossaryStatus.LOCKED)]
+    parts = protector.split("The Vermilion Princess entered.", terms)
+    assert parts == [
+        (False, "The ", None),
+        (True, "Princesa Vermileon", terms[0]),
+        (False, " entered.", None),
+    ]

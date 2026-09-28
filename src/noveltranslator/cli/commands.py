@@ -1,12 +1,16 @@
 from dataclasses import replace
+import os
 
 import typer
 
 from noveltranslator.access.http_client import HttpClient
+from noveltranslator.access.browser_client import BrowserClient
 from noveltranslator.access.manager import AccessManager
 from noveltranslator.access.models import AccessConfig, RetryConfig
 from noveltranslator.application.resume_service import ResumeService
 from noveltranslator.application.download_service import DownloadService
+from noveltranslator.application.browser_capture_service import BrowserCaptureService
+from noveltranslator.application.html_import_service import HtmlImportService
 from noveltranslator.application.analysis_service import AnalysisService
 from noveltranslator.application.translation_service import TranslationService
 from noveltranslator.application.export_service import ExportService
@@ -17,13 +21,15 @@ from noveltranslator.core.enums import GlossaryStatus
 from noveltranslator.processing.glossary import GlossaryManager
 from noveltranslator.processing.memory import MemoryManager
 from noveltranslator.processing.splitter import TextSplitter
+from noveltranslator.processing.normalizer import TextNormalizer
 from noveltranslator.infrastructure.config import load_yaml
-from noveltranslator.infrastructure.paths import CONFIG_ROOT, configured_novels_root
+from noveltranslator.infrastructure.paths import CONFIG_ROOT, DATA_ROOT, configured_novels_root
 from noveltranslator.sources.loader import default_registry
 from noveltranslator.storage.repository import NovelRepository
 from noveltranslator.translators import HuggingFaceTranslator, MockTranslator, OllamaTranslator, TranslatorRegistry
 from noveltranslator.validation.chunk_validator import ChunkValidator
 from noveltranslator.application.validation_service import ValidationService
+from noveltranslator.application.translation_repair_service import TranslationRepairService
 from noveltranslator.application.events import ProgressCallback
 from noveltranslator.cli.progress import RunProgress
 
@@ -48,11 +54,18 @@ app.add_typer(context_app, name="context")
 app.add_typer(validation_app, name="validation")
 
 
+@app.callback()
+def main(assisted_browser: bool = typer.Option(False, "--assisted-browser", help="Abre un navegador visible si HTTP queda bloqueado")) -> None:
+    """Configura opciones globales de ejecución."""
+    if assisted_browser:
+        os.environ["NOVELTRANSLATOR_ASSISTED_BROWSER"] = "1"
+
+
 def repository() -> NovelRepository:
     return NovelRepository(configured_novels_root())
 
 
-def access_manager(no_delay: bool = False) -> AccessManager:
+def access_manager(no_delay: bool = False, assisted_browser: bool = False) -> AccessManager:
     config_path = CONFIG_ROOT / "config.yaml"
     if not config_path.is_file():
         config_path = CONFIG_ROOT / "config.example.yaml"
@@ -60,7 +73,9 @@ def access_manager(no_delay: bool = False) -> AccessManager:
     access_config = AccessConfig.from_mapping(values.get("access", {}))
     if no_delay:
         access_config = replace(access_config, min_delay_seconds=0, max_delay_seconds=0, requests_per_minute=0)
-    return AccessManager(HttpClient(access_config, RetryConfig.from_mapping(values.get("retry", {}))))
+    assisted_browser = assisted_browser or os.getenv("NOVELTRANSLATOR_ASSISTED_BROWSER", "").lower() in {"1", "true", "yes", "on"}
+    browser = BrowserClient(profile_directory=DATA_ROOT / "sessions" / "browser") if assisted_browser else None
+    return AccessManager(HttpClient(access_config, RetryConfig.from_mapping(values.get("retry", {}))), browser)
 
 
 def download_service(manager: AccessManager, progress_callback: ProgressCallback | None = None) -> DownloadService:
@@ -382,7 +397,7 @@ def translation_show(novel_id: str = typer.Argument(...), chapter: int = typer.A
 
 
 @app.command()
-def validate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=1), to_chapter: int | None = typer.Option(None, "--to-chapter", min=1)) -> None:
+def validate(novel_id: str = typer.Argument(..., help="Identificador local de novela"), limit: int | None = typer.Option(None, "--limit", min=1), translation_id: str = typer.Option("default", "--translation-id"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0)) -> None:
     with RunProgress() as reporter:
         summary = validation_service_from_config(reporter).validate_novel(novel_id, translation_id=translation_id, limit=limit, from_chapter=from_chapter, to_chapter=to_chapter)
     _display_validation_summary(summary)
@@ -585,7 +600,7 @@ def status(novel_id: str = typer.Argument(..., help="Identificador de novela")) 
 
 
 @app.command()
-def export(novel_id: str = typer.Argument(...), format: str = typer.Option("txt", "--format", help="Formato: txt, json, html o epub"), translation_id: str = typer.Option("default", "--translation-id"), include_warnings: bool = typer.Option(False, "--include-warnings"), overwrite: bool = typer.Option(False, "--overwrite"), allow_partial: bool = typer.Option(False, "--allow-partial"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=1), to_chapter: int | None = typer.Option(None, "--to-chapter", min=1)) -> None:
+def export(novel_id: str = typer.Argument(...), format: str = typer.Option("txt", "--format", help="Formato: txt, json, html o epub"), translation_id: str = typer.Option("default", "--translation-id"), include_warnings: bool = typer.Option(False, "--include-warnings"), overwrite: bool = typer.Option(False, "--overwrite"), allow_partial: bool = typer.Option(False, "--allow-partial"), from_chapter: int | None = typer.Option(None, "--from-chapter", min=0), to_chapter: int | None = typer.Option(None, "--to-chapter", min=0)) -> None:
     try:
         result = ExportService(repository()).export_novel(novel_id, format_id=format, translation_id=translation_id, include_warnings=include_warnings, overwrite=overwrite, allow_partial=allow_partial, from_chapter=from_chapter, to_chapter=to_chapter)
     except (ExportError, KeyError, ValueError, OSError) as error:
@@ -598,3 +613,118 @@ def export(novel_id: str = typer.Argument(...), format: str = typer.Option("txt"
     for warning in result.warnings:
         typer.echo(f"Warning: {warning}")
     return
+
+
+@app.command("capture-html")
+def capture_html(
+    url: str = typer.Argument(..., help="URL de la novela"),
+    from_chapter: int = typer.Option(..., "--from-chapter", min=1, help="Primer capítulo incluido"),
+    to_chapter: int = typer.Option(..., "--to-chapter", min=1, help="Último capítulo incluido"),
+    delay_seconds: float = typer.Option(30.0, "--delay-seconds", min=15.0, help="Pausa mínima entre capítulos"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Reemplaza HTML ya capturado"),
+) -> None:
+    """Guarda HTML visible usando una sola ventana de navegador asistido."""
+    manager = None
+    try:
+        manager = access_manager(assisted_browser=True)
+        registry = default_registry(manager)
+        source = registry.resolve(url)
+        novel = source.get_novel(url)
+        chapters = source.get_chapters(novel)
+        browser = manager.browser_client
+        if browser is None:
+            raise RuntimeError("No se pudo inicializar el navegador asistido")
+        summary = BrowserCaptureService(browser, DATA_ROOT / "sessions" / "captures").capture(
+            novel,
+            chapters,
+            from_chapter=from_chapter,
+            to_chapter=to_chapter,
+            delay_seconds=delay_seconds,
+            overwrite=overwrite,
+        )
+    except (NovelTranslatorError, KeyError, ValueError, OSError, RuntimeError) as error:
+        typer.echo(f"Captura detenida: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    finally:
+        if manager is not None:
+            manager.close()
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"HTML capturados: {summary.captured}")
+    typer.echo(f"Omitidos: {summary.skipped}")
+    typer.echo(f"Fallidos: {summary.failed}")
+    typer.echo(f"Directorio: {summary.output_directory}")
+
+
+@app.command("import-html")
+def import_html(
+    novel_id: str = typer.Argument(..., help="Identificador local de novela"),
+    directory: str | None = typer.Option(None, "--directory", help="Directorio con archivos NNN.html"),
+    force: bool = typer.Option(False, "--force", help="Reemplaza source.json existentes"),
+) -> None:
+    """Importa HTML capturado localmente como source.json, sin usar la red."""
+    root = directory or str(DATA_ROOT / "sessions" / "captures" / novel_id)
+    try:
+        summary = HtmlImportService(repository()).import_directory(novel_id, root, force=force)
+    except (NovelTranslatorError, KeyError, ValueError, OSError) as error:
+        typer.echo(f"Importación detenida: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"HTML importados: {summary.imported}")
+    typer.echo(f"Omitidos: {summary.skipped}")
+    typer.echo(f"Fallidos: {summary.failed}")
+    typer.echo(f"Archivos revisados: {summary.total_files}")
+
+
+@app.command("repair-source")
+def repair_source(
+    novel_id: str = typer.Argument(..., help="Identificador local de novela"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Solo informa sin modificar source.json"),
+) -> None:
+    """Corrige codificación mojibake en fuentes locales, sin usar la red."""
+    repo = repository()
+    normalizer = TextNormalizer()
+    changed = 0
+    for number in repo.list_chapters(novel_id):
+        if not repo.source_exists(novel_id, number):
+            continue
+        payload = repo.load_source(novel_id, number)
+        original = payload.get("paragraphs", [])
+        repaired = normalizer.normalize(original)
+        if repaired == original:
+            continue
+        changed += 1
+        typer.echo(f"Codificación detectada: capítulo {number:03d}")
+        if not dry_run:
+            repo.save_source(novel_id, number, payload.get("language", "en"), repaired)
+            repo.save_chapter_metadata(novel_id, number, {"status": "DOWNLOADED", "encoding_repaired": True})
+    typer.echo(f"Capítulos corregibles: {changed}")
+    typer.echo("Modo: simulación" if dry_run else "Fuentes corregidas")
+
+
+@app.command("repair-translations")
+def repair_translations(
+    novel_id: str = typer.Argument(..., help="Identificador local de novela"),
+    translation_id: str = typer.Option("default", "--translation-id", help="Traducción persistida a corregir"),
+    from_chapter: int | None = typer.Option(None, "--from-chapter", min=1),
+    to_chapter: int | None = typer.Option(None, "--to-chapter", min=1),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Solo informa sin modificar chunks"),
+) -> None:
+    """Corrige chunks existentes usando términos bloqueados del glosario."""
+    try:
+        summary = TranslationRepairService(repository()).repair_novel(
+            novel_id,
+            translation_id,
+            from_chapter=from_chapter,
+            to_chapter=to_chapter,
+            dry_run=dry_run,
+        )
+    except (NovelTranslatorError, KeyError, ValueError, OSError) as error:
+        typer.echo(f"Corrección detenida: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"Translation: {summary.translation_id}")
+    typer.echo(f"Chunks revisados: {summary.chunks_scanned}")
+    typer.echo(f"Chunks corregidos: {summary.chunks_changed}")
+    typer.echo(f"Capítulos afectados: {summary.chapters_changed}")
+    typer.echo(f"Reemplazos: {summary.replacements}")
+    typer.echo("Modo: simulación" if dry_run else "Chunks corregidos")

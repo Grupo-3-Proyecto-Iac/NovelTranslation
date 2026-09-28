@@ -254,6 +254,39 @@ El flujo soportado es `download -> analyze -> translate -> validate -> export`, 
 
 El backend real opcional es Ollama; la instalación base no descarga modelos ni navegadores. Lorenovels es la fuente real incluida actualmente. La exportación no realiza red y los warnings de validación requieren autorización explícita.
 
+## Acceso asistido opcional
+
+El flujo HTTP normal continúa siendo el predeterminado. Si una fuente devuelve un bloqueo, puedes activar un navegador visible para completar manualmente el CAPTCHA o verificación, siempre respetando las reglas del sitio:
+
+```powershell
+pip install -e ".[browser]"
+python -m playwright install chromium
+$env:NOVELTRANSLATOR_ASSISTED_BROWSER = "1"
+noveltranslator download "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --from-chapter 17 --to-chapter 17 --limit 1
+```
+
+El navegador usa un perfil local en `data/sessions/browser` para conservar la sesión durante ejecuciones posteriores. NovelTranslator no resuelve ni evita CAPTCHAs automáticamente: abre el navegador, espera a que el usuario complete la verificación y reintenta una vez. Para volver al comportamiento normal, cierra la consola o ejecuta `$env:NOVELTRANSLATOR_ASSISTED_BROWSER = "0"`.
+
+Para capturar HTML visible en una única ventana, con una pausa mínima de 15 segundos entre capítulos:
+
+```powershell
+noveltranslator capture-html `
+  "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" `
+  --from-chapter 19 `
+  --to-chapter 25 `
+  --delay-seconds 30
+```
+
+Los archivos se guardan en `data/sessions/captures/<novel-id>/`. La captura se detiene si el HTML no contiene párrafos de capítulo procesables; no intenta superar bloqueos ni automatiza CAPTCHAs.
+
+Para incorporar capturas existentes al almacenamiento de la novela:
+
+```powershell
+noveltranslator import-html surviving-in-a-romance-fantasy-novel
+```
+
+Este comando no usa la red, crea o actualiza `source.json` y marca los capítulos como descargados. Omite los capítulos que ya tienen un `source.json`, salvo que se use `--force`.
+
 ## Roadmap
 
 1. Sprint 0: arquitectura, modelos, interfaces, JSON y CLI base.
