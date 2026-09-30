@@ -63,7 +63,8 @@ class ExportService:
         if not chapters:
             raise ExportError("No chapters are eligible for export.")
         cover_path = self._local_cover(metadata, novel_id)
-        book = ExportBook(novel_id, str(metadata.get("title", novel_id)), metadata.get("author"), str(metadata.get("language", "en")), target_language, translation_id, metadata.get("source"), tuple(chapters), cover_path)
+        display_title = metadata.get("translated_title") if target_language.casefold() == "es" else None
+        book = ExportBook(novel_id, str(display_title or metadata.get("title", novel_id)), metadata.get("author"), str(metadata.get("language", "en")), target_language, translation_id, metadata.get("source"), tuple(chapters), cover_path)
         output = Path(destination) if destination else self._default_destination(novel_id, book.title, target_language, translation_id, format_id)
         request = ExportRequest(novel_id, translation_id, output, include_warnings, only_validated, allow_partial, overwrite, from_chapter, to_chapter)
         logger.info("Export started: %s (%s)", novel_id, format_id)

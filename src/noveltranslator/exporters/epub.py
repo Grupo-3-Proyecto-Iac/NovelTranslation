@@ -6,7 +6,7 @@ from zipfile import ZIP_STORED, ZIP_DEFLATED, ZipFile
 
 from noveltranslator.storage.serialization import utc_now_iso
 
-from .base import ExportBook, ExportRequest, ExportResult
+from .base import ExportBook, ExportRequest, ExportResult, chapter_heading
 from .utils import prepare_output, result
 
 
@@ -27,7 +27,7 @@ class EpubExporter:
             chapter_files.append((filename, self._chapter_xhtml(book, chapter)))
             manifest.append(f"<item id=\"{item_id}\" href=\"{filename}\" media-type=\"application/xhtml+xml\"/>")
             spine.append(f"<itemref idref=\"{item_id}\"/>")
-            nav_items.append(f"<li><a href=\"{filename}\">Chapter {chapter.number} — {escape(chapter.title)}</a></li>")
+            nav_items.append(f"<li><a href=\"{filename}\">{escape(chapter_heading(chapter))}</a></li>")
         cover_bytes = None
         cover_name = None
         if book.cover_path and book.cover_path.is_file():
@@ -39,7 +39,7 @@ class EpubExporter:
 <package xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"book-id\" version=\"3.0\">
 <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">{identifier}</dc:identifier><dc:title>{escape(book.title)}</dc:title>{f'<dc:creator>{escape(book.author)}</dc:creator>' if book.author else ''}<dc:language>{escape(book.target_language)}</dc:language><meta property=\"dcterms:modified\">{modified}</meta></metadata>
 <manifest>{''.join(manifest)}</manifest><spine>{''.join(spine)}</spine></package>"""
-        nav = f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>{escape(book.title)}</title></head><body><nav epub:type=\"toc\" id=\"toc\"><h1>Contents</h1><ol>{''.join(nav_items)}</ol></nav></body></html>"""
+        nav = f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>{escape(book.title)}</title></head><body><nav epub:type=\"toc\" id=\"toc\"><h1>Índice</h1><ol>{''.join(nav_items)}</ol></nav></body></html>"""
         with ZipFile(destination, "w") as archive:
             archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
             archive.writestr("META-INF/container.xml", "<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>", compress_type=ZIP_DEFLATED)
@@ -55,4 +55,4 @@ class EpubExporter:
     @staticmethod
     def _chapter_xhtml(book: ExportBook, chapter) -> str:
         paragraphs = "".join(f"<p>{escape(paragraph)}</p>" for paragraph in chapter.paragraphs)
-        return f"<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>{escape(chapter.title)}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"styles.css\"/></head><body><h1>{escape(book.title)}</h1><h2>Chapter {chapter.number} — {escape(chapter.title)}</h2>{paragraphs}</body></html>"
+        return f"<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>{escape(chapter.title)}</title><link rel=\"stylesheet\" type=\"text/css\" href=\"styles.css\"/></head><body><h1>{escape(book.title)}</h1><h2>{escape(chapter_heading(chapter))}</h2>{paragraphs}</body></html>"

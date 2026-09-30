@@ -34,4 +34,5 @@ class ChapterAssembler:
             text_parts.append(text)
         text = "\n\n".join(text_parts)
         paragraphs = tuple(item.strip() for item in text.split("\n\n") if item.strip())
-        return ExportChapter(chapter_number, str(metadata.get("title", f"Chapter {chapter_number}")), text, paragraphs, validation_status)
+        title = metadata.get("translated_title") or metadata.get("title", f"Chapter {chapter_number}")
+        return ExportChapter(chapter_number, str(title), text, paragraphs, validation_status)

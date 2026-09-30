@@ -10,6 +10,7 @@ from noveltranslator.core.exceptions import ExportError
 from noveltranslator.core.models import Chapter, Novel
 from noveltranslator.core.enums import ProcessingState
 from noveltranslator.exporters.assembler import ChapterAssembler
+from noveltranslator.exporters.base import ExportChapter, chapter_heading
 from noveltranslator.cli import commands
 from noveltranslator.storage.repository import NovelRepository
 from noveltranslator.storage.serialization import utc_now_iso, write_json_atomic
@@ -59,6 +60,31 @@ def test_export_all_formats_and_escape_html(tmp_path: Path) -> None:
         assert "OEBPS/chapter_001.xhtml" in archive.namelist()
         assert "OEBPS/chapter_002.xhtml" in archive.namelist()
         assert "First" in archive.read("OEBPS/nav.xhtml").decode("utf-8")
+
+
+def test_export_uses_translated_book_and_chapter_titles(tmp_path: Path) -> None:
+    repo, novel_id, translation_id = export_fixture(tmp_path)
+    repo.save_novel_metadata(novel_id, {"translated_title": "Sobreviviendo en una novela de fantasía romántica"})
+    repo.save_chapter_metadata(novel_id, 1, {"translated_title": "Seol Tae Pyeong (Parte 1)"})
+
+    txt = ExportService(repo).export_novel(novel_id, format_id="txt", translation_id=translation_id)
+    assert "Sobreviviendo en una novela de fantasía romántica" in txt.output_path.read_text(encoding="utf-8")
+    assert "Capítulo 1 — Seol Tae Pyeong (Parte 1)" in txt.output_path.read_text(encoding="utf-8")
+
+    html = ExportService(repo).export_novel(novel_id, format_id="html", translation_id=translation_id)
+    assert "Capítulo 1 — Seol Tae Pyeong (Parte 1)" in html.output_path.read_text(encoding="utf-8")
+
+    epub = ExportService(repo).export_novel(novel_id, format_id="epub", translation_id=translation_id)
+    with ZipFile(epub.output_path) as archive:
+        nav = archive.read("OEBPS/nav.xhtml").decode("utf-8")
+        chapter = archive.read("OEBPS/chapter_001.xhtml").decode("utf-8")
+    assert "Capítulo 1 — Seol Tae Pyeong (Parte 1)" in nav
+    assert "Capítulo 1 — Seol Tae Pyeong (Parte 1)" in chapter
+
+
+def test_prologue_export_heading_does_not_show_chapter_zero() -> None:
+    prologue = ExportChapter(0, "Prólogo", "texto")
+    assert chapter_heading(prologue) == "Prólogo"
 
 
 def test_warning_requires_explicit_opt_in_and_overwrite_is_explicit(tmp_path: Path) -> None:
