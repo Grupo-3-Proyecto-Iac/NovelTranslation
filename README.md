@@ -1,5 +1,24 @@
 # NovelTranslator
 
+## Descripción del proyecto
+
+NovelTranslator es una aplicación modular de Python para adquirir novelas web,
+conservar su contenido original, analizarlo, traducirlo del inglés al español,
+validar la integridad de los resultados y exportarlos en formatos legibles.
+Está diseñada como un monolito modular: el núcleo no depende de una página web
+concreta ni de un único modelo de traducción.
+
+El proyecto separa las fuentes web, el acceso HTTP, el procesamiento de texto,
+los traductores, la memoria de traducción, la validación, el almacenamiento y
+la exportación. Esto permite incorporar nuevas fuentes o traductores sin
+reescribir el pipeline principal.
+
+La persistencia está basada en archivos JSON. Cada operación deja artefactos y
+checkpoints en disco para que el programa pueda cerrarse y continuar después
+sin repetir automáticamente el trabajo válido. La fuente Lorenovels está
+incluida, pero la arquitectura permite agregar otras fuentes mediante
+adaptadores.
+
 Aplicación Python modular para adquirir novelas web, conservar el original, analizarlas, traducirlas de inglés a español y exportarlas. El proyecto está en:
 
 `C:\Users\Usuario\Desktop\Programación\NovelTranslator`
@@ -321,6 +340,284 @@ noveltranslator import-html surviving-in-a-romance-fantasy-novel
 ```
 
 Este comando no usa la red, crea o actualiza `source.json` y marca los capítulos como descargados. Omite los capítulos que ya tienen un `source.json`, salvo que se use `--force`.
+
++## Guía completa de instalación y ejecución
+
+Esta guía está pensada para Windows y PowerShell. Los comandos de Python también
+funcionan en otros sistemas con los equivalentes de activación del entorno.
+
+### 1. Preparar el proyecto
+
+    cd "C:\Users\Usuario\Desktop\Programación\NovelTranslator"
+    py -3.12 -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    python -m pip install -e ".[dev]"
+
+Comprueba que se usa el Python correcto:
+
+    python -c "import sys; print(sys.executable)"
+    python -m noveltranslator --help
+    python -m pytest -q
+
+La prueba debe ejecutarse desde la carpeta NovelTranslator; de lo contrario,
+pytest puede descubrir proyectos ajenos ubicados en la carpeta superior.
+
+Si PowerShell bloquea la activación:
+
+    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+### 2. Configurar NovelTranslator
+
+El programa usa config/config.yaml. Si no existe, carga
+config/config.example.yaml. Para crear la configuración local:
+
+    Copy-Item config\config.example.yaml config\config.yaml
+
+config/config.yaml está ignorado por Git. Puedes modificarlo sin afectar el
+repositorio. Las rutas relativas, como data/novels, parten de la raíz del
+proyecto.
+
+Instalación de extras opcionales:
+
+    python -m pip install -e ".[huggingface]"
+    python -m pip install -e ".[audio]"
+    python -m pip install -e ".[browser]"
+
+- huggingface instala Transformers y PyTorch para traducir localmente en CPU.
+- audio instala Supertonic, ONNX Runtime y NumPy para generar WAV.
+- browser instala Playwright para el navegador asistido.
+- No es necesario instalar todos los extras.
+
+### 3. Parámetros de configuración YAML
+
+Los cambios en config/config.yaml se aplican al iniciar el siguiente comando.
+
+#### storage y language
+
+| Parámetro | Ejemplo | Uso |
+| --- | --- | --- |
+| storage.base_directory | data/novels | Raíz del almacenamiento de novelas. |
+| language.source | en | Idioma original. |
+| language.target | es | Idioma de destino. |
+
+#### access
+
+| Parámetro | Ejemplo | Uso |
+| --- | ---: | --- |
+| access.concurrency | 1 | Concurrencia de acceso; mantener 1 para ser respetuoso. |
+| access.timeout.connect_seconds | 10 | Tiempo máximo para conectar. |
+| access.timeout.read_seconds | 30 | Tiempo máximo esperando la respuesta. |
+| access.timeout.write_seconds | 30 | Tiempo máximo enviando datos. |
+| access.timeout.pool_seconds | 10 | Tiempo máximo esperando conexión disponible. |
+| access.delay.min_seconds | 8 | Pausa mínima entre peticiones. |
+| access.delay.max_seconds | 15 | Pausa máxima aleatoria entre peticiones. |
+| access.requests_per_minute | 4 | Límite de solicitudes por minuto. |
+| access.follow_redirects | true | Sigue redirecciones HTTP. |
+| access.max_response_size_mb | 10 | Tamaño máximo de respuesta aceptado. |
+| access.headers | mapa | User-Agent, Accept y otros headers HTTP. |
+
+No uses access.check --no-delay para descargar capítulos. Esa opción solo
+sirve para un diagnóstico HTTP puntual.
+
+#### retry
+
+| Parámetro | Ejemplo | Uso |
+| --- | ---: | --- |
+| retry.max_attempts | 3 | Máximo de intentos totales. |
+| retry.base_delay_seconds | 30 | Espera inicial del backoff. |
+| retry.max_delay_seconds | 300 | Límite de la espera exponencial. |
+| retry.backoff_factor | 2 | Multiplicador entre intentos. |
+| retry.max_retry_after_seconds | 300 | Límite de Retry-After del servidor. |
+
+Los reintentos son limitados. El sistema no evade CAPTCHA ni bloqueos HTTP.
+
+#### download y processing.chunking
+
+| Parámetro | Ejemplo | Uso |
+| --- | ---: | --- |
+| download.on_chapter_error | stop | Detiene o permite continuar tras un error. |
+| download.skip_existing | true | Omite source.json válido. |
+| download.refresh_metadata | true | Actualiza metadata y lista de capítulos. |
+| processing.chunking.max_characters | 2200 | Máximo de caracteres por chunk. |
+| processing.chunking.target_characters | 1700 | Tamaño objetivo al agrupar texto. |
+| processing.chunking.overlap_paragraphs | 0 | Párrafos repetidos como contexto entre chunks. |
+
+Un chunk mayor reduce el número de solicitudes, pero necesita más memoria y
+tarda más en traducirse. target_characters no puede superar max_characters.
+
+#### analysis.context
+
+| Parámetro | Ejemplo | Uso |
+| --- | ---: | --- |
+| analysis.context.previous_chunks | 1 | Chunks anteriores enviados como contexto. |
+| analysis.context.include_glossary | true | Usa términos relevantes del glosario. |
+| analysis.context.include_entities | true | Incluye entidades detectadas. |
+
+#### translation
+
+| Parámetro | Ejemplo | Uso |
+| --- | --- | --- |
+| translation.provider | mock | Proveedor usado por run/resume. |
+| translation.source_language | en | Idioma de entrada. |
+| translation.target_language | es | Idioma de salida. |
+| translation.model | qwen2.5:7b | Modelo configurado para Ollama. |
+| translation.huggingface_model | Helsinki-NLP/opus-mt-en-es | Modelo HF. |
+| translation.huggingface_device | cpu | Dispositivo de Hugging Face. |
+| translation.context.previous_chunks | 1 | Contexto previo para traducir. |
+| translation.behavior.preserve_locked_terms | true | Protege términos bloqueados. |
+| translation.behavior.skip_existing | true | Omite chunks válidos existentes. |
+| translation.output.translation_id | default | Identificador persistido. |
+| translation.retry.max_attempts | 2 | Intentos ante fallo de traducción. |
+
+mock sirve para pruebas y no es una traducción final. huggingface requiere el
+extra correspondiente y descarga el modelo la primera vez. ollama requiere
+Ollama instalado y un modelo disponible.
+
+#### memory y validation
+
+| Parámetro | Ejemplo | Uso |
+| --- | ---: | --- |
+| memory.enabled | true | Activa memoria de traducción y contexto. |
+| memory.translation.max_entries_per_request | 20 | Máximo de entradas enviadas. |
+| memory.translation.exact_match | true | Prioriza coincidencias exactas. |
+| memory.context.previous_chapters | 2 | Capítulos anteriores considerados. |
+| memory.context.max_items | 20 | Máximo de elementos narrativos. |
+| memory.conflict_policy | warn | Marca conflictos para revisión. |
+| validation.enabled | true | Activa validación estructural. |
+| validation.auto_validate_after_translation | true | Valida tras traducir. |
+| validation.length_ratio.min | 0.35 | Ratio mínimo traducción/original. |
+| validation.length_ratio.max | 2.50 | Ratio máximo traducción/original. |
+| validation.untranslated_detection.enabled | true | Detecta posibles restos en inglés. |
+| validation.untranslated_detection.warning_threshold | 0.30 | Umbral de advertencia. |
+| validation.locked_terms.missing_is_failure | true | Término protegido ausente es fallo. |
+
+La validación comprueba integridad, hashes, chunks faltantes, placeholders,
+Unicode, términos protegidos, ratios y posibles fragmentos no traducidos. No
+sustituye una revisión humana de estilo.
+
+## Flujo normal de uso
+
+### Opción A: pipeline completo
+
+    noveltranslator run "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --limit 1 --translator mock --translation-id prueba --format epub
+
+Para traducción real con Hugging Face:
+
+    noveltranslator run "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --translator huggingface --translation-id hf-opus-v3 --format epub
+
+Para un rango:
+
+    noveltranslator run "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --from-chapter 0 --to-chapter 10 --translator huggingface --translation-id hf-opus-v3 --format epub --overwrite
+
+run ejecuta descarga, análisis, traducción, validación y exportación. Muestra
+progreso en tiempo real y omite artefactos válidos. --force reprocesa artefactos;
+--overwrite reemplaza el archivo exportado.
+
+### Opción B: etapas separadas
+
+    noveltranslator download "https://lorenovels.com/surviving-in-a-romance-fantasy-novel/" --limit 1
+    noveltranslator analyze surviving-in-a-romance-fantasy-novel --from-chapter 0 --to-chapter 0
+    noveltranslator translate surviving-in-a-romance-fantasy-novel --translator huggingface --translation-id hf-opus-v3 --from-chapter 0 --to-chapter 0
+    noveltranslator validate surviving-in-a-romance-fantasy-novel --translation-id hf-opus-v3 --from-chapter 0 --to-chapter 0
+    noveltranslator export surviving-in-a-romance-fantasy-novel --format epub --translation-id hf-opus-v3 --from-chapter 0 --to-chapter 0 --overwrite
+
+Esta modalidad permite revisar el glosario entre etapas.
+
+### Reanudar y consultar estado
+
+    noveltranslator resume
+    noveltranslator resume surviving-in-a-romance-fantasy-novel --limit 1
+    noveltranslator status surviving-in-a-romance-fantasy-novel
+
+resume usa el checkpoint persistido y no inicia una nueva tarea si no hay
+trabajo pendiente.
+
+## Parámetros del comando audio
+
+El audio local es opcional. Instala primero:
+
+    python -m pip install -e ".[audio]"
+
+Ejemplo completo:
+
+    noveltranslator audio surviving-in-a-romance-fantasy-novel --translation-id hf-opus-v3 --from-chapter 0 --to-chapter 0 --voice M5 --speed 1.40 --steps 8 --pause-seconds 0.25 --tail-silence-seconds 0.35 --threads 4 --max-unit-characters 900
+
+| Parámetro | Rango o valor predeterminado | Uso |
+| --- | --- | --- |
+| --translation-id | hf-opus-v3 | Traducción que se narrará. |
+| --voice | M5 | Estilo de voz Supertonic. |
+| --speed | 0.5–2.0; 1.40 | Velocidad de lectura. 1.0 es natural; 1.25–1.40 acelera. |
+| --steps | 1–100; 8 | Pasos de síntesis. Menos suele ser más rápido, con posible pérdida de estabilidad. |
+| --from-chapter | desde 0 | Primer capítulo incluido. |
+| --to-chapter | desde 0 | Último capítulo incluido. |
+| --pause-seconds | >= 0; 0.25 | Silencio entre unidades; usa 0 para continuidad máxima. |
+| --tail-silence-seconds | >= 0; 0.35 | Silencio final para evitar cortar la última sílaba. |
+| --threads | 1–16; 4 | Hilos del motor local; más hilos aumentan CPU. |
+| --max-unit-characters | >= 100; 900 | Tamaño máximo de una unidad de síntesis. |
+| --overwrite | desactivado | Regenera capítulos aunque el audio ya sea reutilizable. |
+
+Para el portátil:
+
+- Equilibrado: speed 1.25–1.40, steps 8, threads 4.
+- Menor consumo: speed 1.0–1.25, steps 6, threads 2.
+- Menos pausas: pause-seconds 0; conserva tail-silence-seconds 0.25–0.35.
+- CPU alta: baja primero threads y luego steps.
+- max-unit-characters mayor produce menos unidades, pero cada unidad tarda más.
+- El comando crea un WAV y manifest.json por capítulo, no un audio por palabra.
+- Usa --overwrite solo tras cambiar parámetros o si quieres regenerar.
+
+Los archivos se guardan en:
+
+    data/novels/<novel-id>/chapters/NNN/audio/
+
+La sincronización disponible es por unidad de texto, no por palabra.
+
+## Comandos de revisión y mantenimiento
+
+    noveltranslator translator list
+    noveltranslator glossary list surviving-in-a-romance-fantasy-novel
+    noveltranslator glossary set surviving-in-a-romance-fantasy-novel "Cheongdo Palace" --translation "Palacio Cheongdo"
+    noveltranslator glossary lock surviving-in-a-romance-fantasy-novel "Cheongdo Palace"
+    noveltranslator repair-translations surviving-in-a-romance-fantasy-novel --translation-id hf-opus-v3 --dry-run
+    noveltranslator validation report surviving-in-a-romance-fantasy-novel --translation-id hf-opus-v3
+    noveltranslator memory search surviving-in-a-romance-fantasy-novel "Your Highness"
+    noveltranslator context show surviving-in-a-romance-fantasy-novel --chapter 1
+
+Para HTML capturado localmente:
+
+    noveltranslator import-html surviving-in-a-romance-fantasy-novel --directory data/sessions/captures/surviving-in-a-romance-fantasy-novel
+
+Este comando no usa la red. Después ejecuta analyze, translate y validate.
+
+## Archivos locales y seguridad
+
+El código, tests, README, configuración de ejemplo y plantillas sí deben estar
+en Git. No subas .venv, config/config.yaml si contiene datos privados,
+data/novels, data/sessions, data/cache, data/logs, modelos, EPUB, WAV ni
+perfiles de navegador. Esos directorios están ignorados para evitar subir
+capítulos y artefactos pesados.
+
+Para usar el navegador asistido:
+
+    python -m pip install -e ".[browser]"
+    python -m playwright install chromium
+    $env:NOVELTRANSLATOR_ASSISTED_BROWSER = "1"
+
+El navegador visible requiere intervención manual cuando el sitio presenta un
+CAPTCHA o una verificación. NovelTranslator no intenta evadirlos.
+
+## Solución de problemas
+
+- Comando no encontrado: activa .venv o usa python -m noveltranslator.
+- Error de Transformers/PyTorch: instala el extra huggingface.
+- Primera traducción lenta: el modelo se descarga y carga una vez.
+- CPU alta en audio: baja --threads y después --steps.
+- Capítulo omitido: ya existe un artefacto válido; usa --force explícitamente.
+- Exportación sin capítulos: ejecuta validate y revisa validation report.
+- Acceso bloqueado: usa captura asistida manual; no se evaden CAPTCHAs.
+- Tests inesperados: ejecuta pytest desde la carpeta NovelTranslator.
+
 
 ## Roadmap
 
