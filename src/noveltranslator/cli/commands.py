@@ -2,6 +2,7 @@ from dataclasses import replace
 import os
 
 import typer
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from noveltranslator.access.http_client import HttpClient
 from noveltranslator.access.browser_client import BrowserClient
@@ -32,6 +33,7 @@ from noveltranslator.application.validation_service import ValidationService
 from noveltranslator.application.translation_repair_service import TranslationRepairService
 from noveltranslator.application.events import ProgressCallback
 from noveltranslator.cli.progress import RunProgress
+from noveltranslator.audio import AudioGenerationService
 
 app = typer.Typer(help="NovelTranslator: adquiere, analiza y traduce novelas web.")
 source_app = typer.Typer(help="Gestiona las fuentes registradas.")
@@ -204,6 +206,112 @@ def analyze(novel_id: str = typer.Argument(..., help="Identificador local de nov
     typer.echo(f"Failed: {summary.failed}")
     typer.echo(f"Pending: {summary.pending}")
     typer.echo("Status: ANALYSIS COMPLETED" if summary.completed else "Status: INCOMPLETE")
+
+
+@app.command("audio")
+def audio(
+    novel_id: str = typer.Argument(..., help="Identificador local de novela"),
+    translation_id: str = typer.Option("hf-opus-v3", "--translation-id", help="Traducción persistida que se narrará"),
+    voice: str = typer.Option("M5", "--voice", help="Estilo de voz Supertonic"),
+    speed: float = typer.Option(1.40, "--speed", min=0.5, max=2.0, help="Velocidad de lectura"),
+    steps: int = typer.Option(8, "--steps", min=1, max=100, help="Pasos de síntesis: menos es más rápido"),
+    from_chapter: int | None = typer.Option(None, "--from-chapter", min=0),
+    to_chapter: int | None = typer.Option(None, "--to-chapter", min=0),
+    pause_seconds: float = typer.Option(0.25, "--pause-seconds", min=0.0, help="Silencio entre unidades habladas"),
+    tail_silence_seconds: float = typer.Option(0.35, "--tail-silence-seconds", min=0.0, help="Silencio final para evitar cortes"),
+    threads: int = typer.Option(4, "--threads", min=1, max=16, help="Hilos máximos del motor local"),
+    max_unit_characters: int = typer.Option(900, "--max-unit-characters", min=100, help="Límite seguro de caracteres por unidad"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Regenera el capítulo aunque ya exista"),
+) -> None:
+    """Genera un WAV por capítulo y un manifest de sincronización."""
+    progress = Progress(
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    )
+    chapter_task = progress.add_task("Capítulos", total=1)
+    unit_task = progress.add_task("Preparando audio", total=1)
+
+    def update_audio_progress(event: dict[str, object]) -> None:
+        event_name = event.get("event")
+        chapter = int(event.get("chapter", 0))
+        chapter_position = int(event.get("chapter_position", 0))
+        chapters_total = int(event.get("chapters_total", 1))
+        units_total = int(event.get("units_total", 1))
+        chunks_total = int(event.get("chunks_total", 1))
+        chapter_completed = event_name in {"chapter_completed", "chapter_skipped"}
+        progress.update(
+            chapter_task,
+            total=chapters_total,
+            completed=chapter_position if chapter_completed else max(0, chapter_position - 1),
+            description=f"Capítulos · {chapter_position}/{chapters_total} · actual {chapter:03d}",
+        )
+        if event_name == "chapter_started":
+            progress.update(
+                unit_task,
+                total=max(1, units_total),
+                completed=0,
+                description=f"Capítulo {chapter:03d} · preparando {chunks_total} chunks",
+            )
+        elif event_name == "unit_completed":
+            unit_position = int(event.get("unit_position", 0))
+            chunk_position = int(event.get("chunk_position", 0))
+            chunk_index = int(event.get("chunk_index", 0))
+            progress.update(
+                unit_task,
+                total=max(1, units_total),
+                completed=unit_position,
+                description=(
+                    f"Capítulo {chapter:03d} · chunk {chunk_position}/{chunks_total} "
+                    f"(id {chunk_index:03d}) · unidad {unit_position}/{units_total}"
+                ),
+            )
+        elif event_name in {"chapter_completed", "chapter_skipped"}:
+            label = "omitido" if event_name == "chapter_skipped" else "completado"
+            progress.update(
+                unit_task,
+                total=max(1, units_total),
+                completed=max(1, units_total),
+                description=f"Capítulo {chapter:03d} · {label}",
+            )
+            progress.update(
+                chapter_task,
+                total=chapters_total,
+                completed=chapter_position,
+                description=f"Capítulos · {chapter_position}/{chapters_total} · {label}",
+            )
+
+    try:
+        with progress:
+            summary = AudioGenerationService(
+                repository(),
+                progress_callback=lambda message: None,
+                progress_detail_callback=update_audio_progress,
+            ).generate_novel(
+                novel_id,
+                translation_id=translation_id,
+                voice=voice,
+                speed=speed,
+                steps=steps,
+                from_chapter=from_chapter,
+                to_chapter=to_chapter,
+                overwrite=overwrite,
+                pause_seconds=pause_seconds,
+                tail_silence_seconds=tail_silence_seconds,
+                threads=threads,
+                max_unit_characters=max_unit_characters,
+            )
+    except (NovelTranslatorError, KeyError, ValueError, OSError, RuntimeError) as error:
+        typer.echo(f"Generación de audio detenida: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Novel: {summary.novel_id}")
+    typer.echo(f"Chapters processed: {summary.chapters_processed}")
+    typer.echo(f"Units generated: {summary.segments_generated}")
+    typer.echo(f"Units skipped: {summary.segments_skipped}")
+    for path in summary.output_paths:
+        typer.echo(f"Output: {path}")
 
 
 @novel_app.command("list")

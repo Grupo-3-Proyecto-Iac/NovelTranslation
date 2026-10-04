@@ -252,8 +252,11 @@ class TranslationService:
         names = sorted({entity.text for entity in entities} | {term.term for term in glossary if term.locked or term.status is GlossaryStatus.CONFIRMED})
         summary = [f"{name} is relevant in chapter {chapter_number}." for name in names]
         self.repository.save_chapter_context(novel_id, chapter_number, {"chapter_number": chapter_number, "summary": summary, "entities": names, "source_hash": source_hash, "translation_id": translation_id, "updated_at": utc_now_iso()})
-        for item in summary:
-            memory.add_context_item(item, chapter_number, names, source_hash=source_hash, translation_id=translation_id)
+        memory.add_context_items(
+            [(item, chapter_number, names) for item in summary],
+            source_hash=source_hash,
+            translation_id=translation_id,
+        )
 
     def _translation_valid(self, novel_id, number, translation_id, chunk_index, source_hash, translator=None) -> bool:
         if not self.repository.translation_chunk_exists(novel_id, number, translation_id, chunk_index):

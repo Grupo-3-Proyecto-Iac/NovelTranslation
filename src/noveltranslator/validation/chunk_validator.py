@@ -9,6 +9,11 @@ from .models import ValidationIssue, ValidationResult, ValidationStatus
 PLACEHOLDER_RE = re.compile(r"__NT_TERM_[A-Z0-9_]+__")
 
 
+def _contains_phrase(text: str, phrase: str) -> bool:
+    """Match a glossary phrase as words, not as an arbitrary substring."""
+    return re.search(rf"(?<!\w){re.escape(phrase.casefold())}(?!\w)", text.casefold()) is not None
+
+
 class ChunkValidator:
     def __init__(self, *, min_length_ratio: float = 0.35, max_length_ratio: float = 2.50, untranslated_threshold: float = 0.30, untranslated_enabled: bool = True, locked_missing_is_failure: bool = True) -> None:
         self.min_length_ratio = min_length_ratio
@@ -42,14 +47,15 @@ class ChunkValidator:
             if ratio < self.min_length_ratio or ratio > self.max_length_ratio:
                 issue("SUSPICIOUS_LENGTH_RATIO", ValidationStatus.WARNING, "Translation length ratio is outside the configured range.", ratio=ratio)
             expected_terms = sorted((term for term in glossary_terms if term.locked or term.preserve), key=lambda term: len(term.term), reverse=True)
-            normalized_translation = " ".join(translated_text.split()).casefold()
+            normalized_source = " ".join(source_text.split())
+            normalized_translation = " ".join(translated_text.split())
             covered: list[str] = []
             for term in expected_terms:
-                source_present = term.term.casefold() in " ".join(source_text.split()).casefold()
-                if not source_present or any(term.term.casefold() in longer.casefold() for longer in covered):
+                source_present = _contains_phrase(normalized_source, term.term)
+                if not source_present or any(_contains_phrase(longer, term.term) for longer in covered):
                     continue
                 expected = term.term if term.preserve or not term.translation else term.translation
-                if expected.casefold() not in normalized_translation:
+                if not _contains_phrase(normalized_translation, expected):
                     code = "LOCKED_TERM_MISSING" if term.locked else "LOCKED_TERM_CHANGED"
                     severity = ValidationStatus.FAILED if term.locked and self.locked_missing_is_failure else ValidationStatus.WARNING
                     issue(code, severity, f"Protected term missing or changed: {term.term}", expected=expected)

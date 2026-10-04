@@ -50,6 +50,41 @@ def test_locked_term_and_length_ratio() -> None:
     assert any(issue.code == "SUSPICIOUS_LENGTH_RATIO" for issue in short.warnings)
 
 
+def test_locked_term_matching_uses_word_boundaries() -> None:
+    validator = ChunkValidator(untranslated_enabled=False)
+    zen = GlossaryTerm("Zen", "OTHER", "zen", True, GlossaryStatus.LOCKED)
+    false_match = validator.validate(
+        "Dozens of warriors arrived.",
+        "Llegaron decenas de guerreros.",
+        chapter_number=1,
+        chunk_index=1,
+        glossary_terms=[zen],
+    )
+    assert false_match.status is ValidationStatus.OK
+
+    true_match = validator.validate(
+        "Zen techniques are practiced here.",
+        "Aquí se practican técnicas.",
+        chapter_number=1,
+        chunk_index=1,
+        glossary_terms=[zen],
+    )
+    assert any(issue.code == "LOCKED_TERM_MISSING" for issue in true_match.errors)
+
+
+def test_singular_locked_term_does_not_match_plural_source() -> None:
+    validator = ChunkValidator(untranslated_enabled=False)
+    term = GlossaryTerm("Princess Consort", "TITLE", "princesa consorte", True, GlossaryStatus.LOCKED)
+    result = validator.validate(
+        "The crown princess consorts arrived.",
+        "Llegaron las princesas consortes.",
+        chapter_number=1,
+        chunk_index=1,
+        glossary_terms=[term],
+    )
+    assert result.status is ValidationStatus.OK
+
+
 def test_chapter_validation_persists_and_detects_hash_and_missing(tmp_path: Path) -> None:
     repo, novel_id, source_hash = fixture_repo(tmp_path)
     result = ValidationService(repo).validate_novel(novel_id)

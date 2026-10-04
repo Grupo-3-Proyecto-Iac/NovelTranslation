@@ -186,6 +186,41 @@ noveltranslator resume NOVEL_ID
 
 La traducción conserva los límites de párrafo del original: los párrafos se traducen individualmente y se persisten separados por una línea en blanco. Es idempotente por hash y checkpoint: los chunks válidos existentes se omiten y una interrupción deja progreso para `resume`. `--force` permite reprocesar explícitamente; `--from-chapter` y `--to-chapter` permiten corregir un rango concreto sin reprocesar toda la novela.
 
+## Audio sincronizable
+
+El flujo principal de NovelTranslator termina en la traducción y el EPUB. `run`
+y `export` no generan audio ni lo incluyen dentro del EPUB. Para la reproducción
+sincronizada, NovelReader usa el servidor WebSocket de `NovelReader/server`:
+Supertonic se carga una vez en el servidor, devuelve PCM16 por segmentos y el
+teléfono lo reproduce directamente en memoria con `AudioTrack`. No se guardan
+WAV/MP3/OGG en el servidor ni en el teléfono.
+
+El comando local siguiente se conserva como herramienta experimental/legacy y
+sí escribe WAV en `data/`; no forma parte del flujo remoto recomendado:
+
+El audio local se genera dentro de NovelTranslator mediante el extra opcional de Supertonic:
+
+```powershell
+python -m pip install -e ".[audio]"
+```
+
+El comando procesa las unidades de texto de forma secuencial, con un límite configurable de hilos de CPU. Guarda únicamente un WAV completo por capítulo y un `manifest.json` con el texto y los tiempos para que NovelReader pueda resaltar la unidad que se está reproduciendo. Las unidades largas se dividen en límites seguros y se añade silencio final para evitar que se corte la última sílaba:
+
+```powershell
+noveltranslator audio surviving-in-a-romance-fantasy-novel `
+  --translation-id hf-opus-v3 `
+  --from-chapter 0 `
+  --to-chapter 0 `
+  --voice M5 `
+  --speed 1.40 `
+  --steps 8 `
+  --threads 4 `
+  --max-unit-characters 900 `
+  --tail-silence-seconds 0.35
+```
+
+Los archivos quedan en `data/novels/<novel-id>/chapters/NNN/audio/`. La versión actual une los textos del capítulo antes de crear las unidades, elimina repeticiones en límites de chunks y agrupa onomatopeyas aisladas con la oración vecina. La carpeta incluye la configuración de velocidad y pasos, por lo que una prueba con `--steps 6` no sobrescribe la de 8 pasos. Menos pasos aceleran la síntesis, aunque pueden reducir ligeramente la calidad. El proceso es idempotente por capítulo: si el texto traducido y la configuración no cambiaron, el capítulo se omite; `--overwrite` lo regenera explícitamente. La sincronización disponible es por unidad de texto, no por palabra.
+
 ## Translation Memory y Context Memory de Sprint 7
 
 La memoria se guarda por novela en `translation_memory.json` y `context_memory.json`, con escritura JSON atómica y UTF-8. Las entradas de traducción conservan `chapter_number`, `chunk_index`, `source_hash` y `translation_id` para trazabilidad.

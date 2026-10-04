@@ -109,20 +109,38 @@ class MemoryManager:
     def save_context_memory(self, items: list[ContextMemoryItem]) -> None:
         self.repository.save_context_memory(self.novel_id, {"items": items, "updated_at": utc_now_iso()})
 
-    def add_context_item(self, text: str, chapter_number: int, entities: list[str] | None = None, *, source_hash: str | None = None, translation_id: str = "default") -> ContextMemoryItem:
-        entities = entities or []
-        item_id = hashlib.sha1(f"{chapter_number}|{normalized_key(text)}|{translation_id}".encode("utf-8")).hexdigest()[:16]
+    def add_context_items(self, new_items: list[tuple[str, int, list[str] | None]], *, source_hash: str | None = None, translation_id: str = "default") -> list[ContextMemoryItem]:
+        if not new_items:
+            return []
+
         items = self.load_context_memory()
-        existing = next((item for item in items if item.id == item_id), None)
-        if existing:
-            existing.source_hash = source_hash or existing.source_hash
-            existing.entities = sorted(set(existing.entities + entities))
-            self.save_context_memory(items)
-            return existing
-        item = ContextMemoryItem(item_id, text, chapter_number, sorted(set(entities)), source_hash, translation_id, "ACTIVE", utc_now_iso())
-        self.save_context_memory(items + [item])
-        logger.info("Context item added: chapter %s", chapter_number)
-        return item
+        by_id = {item.id: item for item in items}
+        added: list[ContextMemoryItem] = []
+        for text, chapter_number, entities in new_items:
+            entities = entities or []
+            item_id = hashlib.sha1(f"{chapter_number}|{normalized_key(text)}|{translation_id}".encode("utf-8")).hexdigest()[:16]
+            existing = by_id.get(item_id)
+            if existing:
+                existing.source_hash = source_hash or existing.source_hash
+                existing.entities = sorted(set(existing.entities + entities))
+                added.append(existing)
+                continue
+
+            item = ContextMemoryItem(item_id, text, chapter_number, sorted(set(entities)), source_hash, translation_id, "ACTIVE", utc_now_iso())
+            items.append(item)
+            by_id[item_id] = item
+            added.append(item)
+            logger.info("Context item added: chapter %s", chapter_number)
+
+        self.save_context_memory(items)
+        return added
+
+    def add_context_item(self, text: str, chapter_number: int, entities: list[str] | None = None, *, source_hash: str | None = None, translation_id: str = "default") -> ContextMemoryItem:
+        return self.add_context_items(
+            [(text, chapter_number, entities)],
+            source_hash=source_hash,
+            translation_id=translation_id,
+        )[0]
 
     def find_context(self, text: str, *, chapter_number: int | None = None, translation_id: str = "default", previous_chapters: int = 2, max_items: int = 20) -> list[ContextMemoryItem]:
         words = set(re.findall(r"[\w'-]+", text.casefold()))

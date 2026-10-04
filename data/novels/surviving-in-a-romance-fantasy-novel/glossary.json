@@ -36,10 +36,10 @@
     {
       "term": "White Immortal Palace",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "Palacio del Sabio Blanco",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 1,
       "first_seen_chunk": null
@@ -47,10 +47,10 @@
     {
       "term": "White Immortal Elder",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "Anciano Sabio Blanco",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 1,
       "first_seen_chunk": null
@@ -80,7 +80,7 @@
     {
       "term": "Cheongdo Palace",
       "type": "OTHER",
-      "translation": "Palacio Cheondo",
+      "translation": "Palacio Cheongdo",
       "locked": true,
       "status": "LOCKED",
       "source": "manual",
@@ -696,10 +696,10 @@
     {
       "term": "White Immortal",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "Sabio Blanco",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 1,
       "first_seen_chunk": null
@@ -1004,10 +1004,10 @@
     {
       "term": "Zen",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "zen",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 1,
       "first_seen_chunk": null
@@ -1235,7 +1235,7 @@
     {
       "term": "White Immortal Mountain",
       "type": "OTHER",
-      "translation": "Montaña Inmortal Blanca",
+      "translation": "Montaña del Sabio Blanco",
       "locked": true,
       "status": "LOCKED",
       "source": "manual",
@@ -1587,10 +1587,10 @@
     {
       "term": "Crown Princess Consorts",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "princesas consortes",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 4,
       "first_seen_chunk": null
@@ -1609,7 +1609,7 @@
     {
       "term": "Crown Princess Consort",
       "type": "OTHER",
-      "translation": "princesa heredera consorte",
+      "translation": "princesa consorte",
       "locked": true,
       "status": "LOCKED",
       "source": "manual",
@@ -3193,10 +3193,10 @@
     {
       "term": "The White Immortal",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "Sabio Blanco",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 9,
       "first_seen_chunk": null
@@ -3490,7 +3490,7 @@
     {
       "term": "Cheongdo Empire",
       "type": "OTHER",
-      "translation": "Imperio Cheondo",
+      "translation": "Imperio Cheongdo",
       "locked": true,
       "status": "LOCKED",
       "source": "manual",
@@ -9639,10 +9639,10 @@
     {
       "term": "Taoism",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "taoísmo",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 28,
       "first_seen_chunk": null
@@ -18043,10 +18043,10 @@
     {
       "term": "Bright Moon General",
       "type": "OTHER",
-      "translation": null,
-      "locked": false,
-      "status": "CANDIDATE",
-      "source": "automatic",
+      "translation": "General de la Luna Brillante",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
       "preserve": false,
       "first_seen_chapter": 72,
       "first_seen_chunk": null
@@ -31613,7 +31613,62 @@
       "preserve": false,
       "first_seen_chapter": 175,
       "first_seen_chunk": null
+    },
+    {
+      "term": "Taoist arts",
+      "type": "OTHER",
+      "translation": "artes taoístas",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
+      "preserve": false,
+      "first_seen_chapter": 1,
+      "first_seen_chunk": null
+    },
+    {
+      "term": "Taoist magic",
+      "type": "OTHER",
+      "translation": "magia taoísta",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
+      "preserve": false,
+      "first_seen_chapter": 1,
+      "first_seen_chunk": null
+    },
+    {
+      "term": "Taoist techniques",
+      "type": "OTHER",
+      "translation": "técnicas taoístas",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
+      "preserve": false,
+      "first_seen_chapter": 1,
+      "first_seen_chunk": null
+    },
+    {
+      "term": "Zen arts",
+      "type": "OTHER",
+      "translation": "artes zen",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
+      "preserve": false,
+      "first_seen_chapter": 1,
+      "first_seen_chunk": null
+    },
+    {
+      "term": "Zen techniques",
+      "type": "OTHER",
+      "translation": "técnicas zen",
+      "locked": true,
+      "status": "LOCKED",
+      "source": "manual",
+      "preserve": false,
+      "first_seen_chapter": 1,
+      "first_seen_chunk": null
     }
   ],
-  "updated_at": "2026-09-27T19:32:03.674569+00:00"
+  "updated_at": "2026-10-01T07:01:05.6928807+00:00"
 }

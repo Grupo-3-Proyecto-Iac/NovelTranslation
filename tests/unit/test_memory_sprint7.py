@@ -46,7 +46,39 @@ def test_memory_marks_stale_by_provenance_and_context_is_relevant_and_limited(tm
     assert len(relevant) == 5
 
 
-def test_translation_builds_chapter_context_and_reconciles_memory(tmp_path: Path) -> None:
+def test_context_items_are_merged_and_persisted_in_one_write(tmp_path: Path, monkeypatch) -> None:
+    repo, novel_id = make_novel(tmp_path)
+    manager = MemoryManager(repo, novel_id)
+    original = manager.add_context_item("Alice is relevant.", 1, ["Alice"], source_hash="old")
+
+    writes = 0
+    save_context_memory = repo.save_context_memory
+
+    def count_saves(saved_novel_id, payload):
+        nonlocal writes
+        writes += 1
+        save_context_memory(saved_novel_id, payload)
+
+    monkeypatch.setattr(repo, "save_context_memory", count_saves)
+    returned = manager.add_context_items(
+        [
+            ("Alice is relevant.", 1, ["Alice", "Queen"]),
+            ("The palace is relevant.", 1, ["Alice", "Queen"]),
+        ],
+        source_hash="new",
+    )
+
+    stored = manager.load_context_memory()
+    assert writes == 1
+    assert len(stored) == 2
+    assert returned[0].id == original.id
+    assert returned[0].source_hash == "new"
+    assert returned[0].entities == ["Alice", "Queen"]
+    assert stored[1].text == "The palace is relevant."
+    assert stored[1].source_hash == "new"
+
+
+def test_translation_builds_chapter_context_and_reconciles_memory(tmp_path: Path, monkeypatch) -> None:
     repo, novel_id = make_novel(tmp_path)
     repo.create_chapter(novel_id, Chapter(1, "First", "https://example.test/1", ProcessingState.DOWNLOADED))
     repo.save_source(novel_id, 1, "en", ["Alice meets the Moon Sword."])
@@ -60,9 +92,20 @@ def test_translation_builds_chapter_context_and_reconciles_memory(tmp_path: Path
     translator = MockTranslator()
     registry.register(translator)
 
+    context_writes = 0
+    save_context_memory = repo.save_context_memory
+
+    def count_context_writes(saved_novel_id, payload):
+        nonlocal context_writes
+        context_writes += 1
+        save_context_memory(saved_novel_id, payload)
+
+    monkeypatch.setattr(repo, "save_context_memory", count_context_writes)
+
     summary = TranslationService(repo, registry, max_translation_entries=20, max_context_items=20).translate_novel(novel_id)
     assert summary.completed
     assert repo.chapter_context_exists(novel_id, 1)
+    assert context_writes == 1
     assert any(item.source_text == "Moon Sword" for item in MemoryManager(repo, novel_id).load_translation_memory())
 
     # A second run sees a valid translation and reconciles without another model call.
